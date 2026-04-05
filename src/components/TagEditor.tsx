@@ -102,6 +102,9 @@ export const TagEditor: React.FC<TagEditorProps> = ({
             placeholder="输入标签名称"
             placeholderTextColor="#a89080"
             autoFocus
+            multiline={false}
+            numberOfLines={1}
+            scrollEnabled={false}
             onSubmitEditing={handleCreateTag}
           />
           <TouchableOpacity
@@ -182,7 +185,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fdfcfb',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 0,
+    height: 40,
     fontSize: 14,
     color: '#3d2c1e',
     borderWidth: 1,
