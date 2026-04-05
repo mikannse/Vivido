@@ -1,0 +1,167 @@
+import React, { useState, useCallback } from 'react';
+import { View, FlatList, StyleSheet, TouchableOpacity, Text, RefreshControl } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { RootStackParamList, DiaryEntry } from '../types';
+import { getAllDiaries } from '../services/database';
+import { TimelineCard } from '../components/TimelineCard';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
+
+export const HomeScreen: React.FC = () => {
+  const navigation = useNavigation<NavigationProp>();
+  const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadDiaries = useCallback(async () => {
+    try {
+      const data = await getAllDiaries();
+      setDiaries(data);
+    } catch (error) {
+      console.error('Failed to load diaries:', error);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadDiaries();
+    }, [loadDiaries])
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadDiaries();
+    setRefreshing(false);
+  };
+
+  const renderItem = ({ item }: { item: DiaryEntry }) => (
+    <TimelineCard
+      diary={item}
+      onPress={() => navigation.navigate('Detail', { diaryId: item.id })}
+    />
+  );
+
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <Text style={styles.emptyTitle}>还没有日记</Text>
+      <Text style={styles.emptySubtitle}>点击右下角按钮开始写日记</Text>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Vivido</Text>
+        <TouchableOpacity
+          style={styles.settingsButton}
+          onPress={() => navigation.navigate('Settings')}
+        >
+          <Text style={styles.settingsIcon}>⚙</Text>
+        </TouchableOpacity>
+      </View>
+
+      <FlatList
+        data={diaries}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.list}
+        ListEmptyComponent={renderEmpty}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#827066"
+          />
+        }
+        showsVerticalScrollIndicator={false}
+      />
+
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => navigation.navigate('Editor', {})}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.fabText}>+</Text>
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8f6f3',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#f8f6f3',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2ddd8',
+  },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: '600',
+    color: '#3d2c1e',
+    fontFamily: 'PlayfairDisplay',
+    letterSpacing: 2,
+  },
+  settingsButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#ebe7e3',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  settingsIcon: {
+    fontSize: 20,
+    color: '#827066',
+  },
+  list: {
+    paddingVertical: 8,
+    flexGrow: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 120,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#3d2c1e',
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: '#827066',
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#c47030',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#3d2c1e',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  fabText: {
+    fontSize: 28,
+    color: '#fdfcfb',
+    fontWeight: '300',
+    marginTop: -2,
+  },
+});

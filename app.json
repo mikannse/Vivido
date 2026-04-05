@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "DiaryApp",
-    "slug": "DiaryApp",
+    "name": "Vivido",
+    "slug": "Vivido",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icons.png",
     "userInterfaceStyle": "light",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#3d2c1e"
     },
     "ios": {
       "supportsTablet": true
@@ -21,10 +21,17 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.vivido.diary"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-image",
+      "expo-sharing",
+      "expo-font"
+    ]
   }
 }
