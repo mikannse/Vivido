@@ -38,6 +38,7 @@ Custom fonts are loaded in `App.tsx` via expo-font:
 - **Editor** (`EditorScreen`) - Create/edit diary with media picker (modal presentation)
 - **Detail** (`DetailScreen`) - View single diary entry
 - **Settings** (`SettingsScreen`) - App settings
+- **Discovery** (`DiscoveryScreen`) - 回顾岛: search, filters, heatmap, word cloud
 
 ### Data Flow
 1. `App.tsx` initializes database on mount, then renders navigation
@@ -48,6 +49,8 @@ Custom fonts are loaded in `App.tsx` via expo-font:
 ### Database Schema
 - **diaries**: id, title, content, createdAt, updatedAt
 - **media**: id, diaryId (FK), type ('image'|'video'), uri, thumbnail, position
+- **tags**: id, name, color, createdAt
+- **diary_tags**: diaryId (FK), tagId (FK) - many-to-many relationship
 - Media entries are cascade-deleted when parent diary is deleted
 
 ### Theme System
