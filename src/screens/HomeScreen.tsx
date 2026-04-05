@@ -53,12 +53,20 @@ export const HomeScreen: React.FC = () => {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Vivido</Text>
-        <TouchableOpacity
-          style={styles.settingsButton}
-          onPress={() => navigation.navigate('Settings')}
-        >
-          <Text style={styles.settingsIcon}>⚙</Text>
-        </TouchableOpacity>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => navigation.navigate('Discovery')}
+          >
+            <Text style={styles.headerIcon}>🔍</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => navigation.navigate('Settings')}
+          >
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <FlatList
@@ -109,6 +117,21 @@ const styles = StyleSheet.create({
     color: '#3d2c1e',
     fontFamily: 'PlayfairDisplay',
     letterSpacing: 2,
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  headerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#ebe7e3',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerIcon: {
+    fontSize: 18,
   },
   settingsButton: {
     width: 40,

@@ -10,6 +10,7 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { EditorScreen } from './src/screens/EditorScreen';
 import { DetailScreen } from './src/screens/DetailScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { DiscoveryScreen } from './src/screens/DiscoveryScreen';
 import { initDatabase } from './src/services/database';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -107,6 +108,7 @@ export default function App() {
           />
           <Stack.Screen name="Detail" component={DetailScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Discovery" component={DiscoveryScreen} />
         </Stack.Navigator>
       </NavigationContainer>
       <StatusBar style="auto" />

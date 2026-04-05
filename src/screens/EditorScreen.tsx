@@ -13,11 +13,12 @@ import {
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { RootStackParamList, DiaryEntry, MediaItem } from '../types';
+import { RootStackParamList, DiaryEntry, MediaItem, Tag } from '../types';
 import { getDiaryById, createDiary, updateDiary } from '../services/database';
 import { saveMedia, deleteDiaryMedia } from '../services/storage';
 import { generateId } from '../utils/uuid';
 import { MediaPicker } from '../components/MediaPicker';
+import { TagEditor } from '../components/TagEditor';
 import { assignMediaPositions, getMediaFileExtension, getOrderedMedia } from '../utils/media';
 import { formatDateInputValue, getWeekDayLabel, parseDateInputValue } from '../utils/date';
 
@@ -34,6 +35,7 @@ export const EditorScreen: React.FC = () => {
   const [content, setContent] = useState('');
   const [date, setDate] = useState(formatDateInputValue(Date.now()));
   const [media, setMedia] = useState<MediaItem[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(false);
   const [originalMedia, setOriginalMedia] = useState<MediaItem[]>([]);
   const [initialCreatedAt, setInitialCreatedAt] = useState(Date.now());
@@ -55,6 +57,7 @@ export const EditorScreen: React.FC = () => {
         const orderedMedia = assignMediaPositions(getOrderedMedia(diary.media));
         setMedia(orderedMedia);
         setOriginalMedia(orderedMedia);
+        setTags(diary.tags);
       } else {
         Alert.alert('提示', '这篇日记不存在或已被删除');
         navigation.goBack();
@@ -104,6 +107,7 @@ export const EditorScreen: React.FC = () => {
         title: title.trim(),
         content: content.trim(),
         media: savedMedia,
+        tags: tags,
         createdAt: parsedCreatedAt,
         updatedAt: now,
       };
@@ -125,11 +129,6 @@ export const EditorScreen: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const getWeekDay = (dateStr: string): string => {
-    const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-    return weekdays[new Date(dateStr).getDay()];
   };
 
   return (
@@ -217,6 +216,13 @@ export const EditorScreen: React.FC = () => {
           <Text style={styles.mediaLabel}>添加媒体</Text>
           <MediaPicker media={media} onMediaChange={setMedia} />
         </View>
+
+        <TagEditor
+          diaryId={diaryId}
+          selectedTags={tags}
+          onTagsChange={setTags}
+        />
+
         <View style={styles.bottomPadding} />
         </ScrollView>
       </View>

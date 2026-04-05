@@ -1,8 +1,8 @@
 import { Directory, File } from 'expo-file-system';
-import { DiaryEntry, MediaItem } from '../types';
+import { DiaryEntry, MediaItem, Tag } from '../types';
 import { generateId } from '../utils/uuid';
 import { deleteMedia, saveMedia } from './storage';
-import { getAllDiaries, replaceAllDiaries } from './database';
+import { getAllDiaries, replaceAllDiaries, getAllTags } from './database';
 import { getMediaFileExtension } from '../utils/media';
 
 const BACKUP_VERSION = 1;
@@ -18,6 +18,13 @@ interface BackupManifestMedia {
   position?: number;
 }
 
+interface BackupManifestTag {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: number;
+}
+
 interface BackupManifestDiary {
   id: string;
   title: string;
@@ -25,6 +32,7 @@ interface BackupManifestDiary {
   createdAt: number;
   updatedAt: number;
   media: BackupManifestMedia[];
+  tags: BackupManifestTag[];
 }
 
 interface BackupManifest {
@@ -135,6 +143,12 @@ const parseBackupManifest = (rawContent: string): BackupManifest => {
             position: typeof media.position === 'number' ? media.position : undefined,
           };
         }),
+        tags: (diary.tags || []).map((tag) => ({
+          id: tag.id,
+          name: tag.name,
+          color: tag.color,
+          createdAt: tag.createdAt,
+        })),
       };
     }),
   };
@@ -193,6 +207,12 @@ export const exportBackup = async (): Promise<{
           position: media.position,
         };
       }),
+      tags: diary.tags.map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        color: tag.color,
+        createdAt: tag.createdAt,
+      })),
     })),
   };
 
@@ -270,6 +290,7 @@ export const importBackup = async (): Promise<{
         createdAt: diary.createdAt,
         updatedAt: diary.updatedAt,
         media: importedMedia,
+        tags: diary.tags || [],
       });
     }
 

@@ -15,8 +15,29 @@ export interface DiaryEntry {
   title: string;
   content: string;
   media: MediaItem[];
+  tags: Tag[];
   createdAt: number;
   updatedAt: number;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  createdAt: number;
+}
+
+export interface DiaryTag {
+  diaryId: string;
+  tagId: string;
+}
+
+export type TimeFilter = 'week' | 'month' | 'sameDayLastYear' | 'all';
+
+export interface WordFrequency {
+  word: string;
+  count: number;
+  level: 1 | 2 | 3;
 }
 
 export type RootStackParamList = {
@@ -24,4 +45,5 @@ export type RootStackParamList = {
   Editor: { diaryId?: string };
   Detail: { diaryId: string };
   Settings: undefined;
+  Discovery: undefined;
 };
