@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
@@ -31,24 +31,25 @@ export default function App() {
   const [isWeb, setIsWeb] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [fontsLoaded] = useFonts({
-    'LXGWWenKai': require('./assets/LXGWWenKaiGBScreen.ttf'),
+    'LXGWWenKaiLite': require('./assets/LXGWWenKaiLite-Regular.ttf'),
     'PlayfairDisplay': require('./assets/PlayfairDisplay-VariableFont_wght.ttf'),
     'SmileySans': require('./assets/SmileySans-Oblique.ttf'),
   });
 
-  const initializeApp = useCallback(async () => {
+  // Initialize database in parallel with fonts loading
+  const retryInit = () => {
     setInitError(null);
     setIsReady(false);
-
-    try {
-      await initDatabase();
-      setIsReady(true);
-    } catch (error) {
-      console.error('Failed to initialize database:', error);
-      setInitError('数据库初始化失败，请重试。');
-      setIsReady(true);
-    }
-  }, []);
+    initDatabase()
+      .then(() => {
+        setIsReady(true);
+      })
+      .catch((error) => {
+        console.error('Failed to initialize database:', error);
+        setInitError('数据库初始化失败，请重试。');
+        setIsReady(true);
+      });
+  };
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -57,9 +58,20 @@ export default function App() {
       return;
     }
 
-    initializeApp();
-  }, [initializeApp]);
+    // Run database initialization without waiting
+    // App will show immediately once database is ready, fonts load in background
+    initDatabase()
+      .then(() => {
+        setIsReady(true);
+      })
+      .catch((error) => {
+        console.error('Failed to initialize database:', error);
+        setInitError('数据库初始化失败，请重试。');
+        setIsReady(true);
+      });
+  }, []);
 
+  // Show loading screen only while database or fonts are initializing
   if (!isReady || !fontsLoaded) {
     return (
       <View style={styles.loadingContainer}>
@@ -83,7 +95,7 @@ export default function App() {
         <View style={styles.errorContainer}>
           <Text style={styles.errorTitle}>无法打开日记</Text>
           <Text style={styles.errorText}>{initError}</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={initializeApp} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.retryButton} onPress={retryInit} activeOpacity={0.85}>
             <Text style={styles.retryText}>重新尝试</Text>
           </TouchableOpacity>
         </View>

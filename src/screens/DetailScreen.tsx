@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Dimensions,
   FlatList,
   StatusBar,
@@ -15,9 +14,10 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { RootStackParamList, DiaryEntry, MediaItem } from '../types';
-import { getDiaryById, deleteDiary } from '../services/database';
+import { getDiaryById, deleteDiary, getAdjacentDiaryIds } from '../services/database';
 import { deleteDiaryMedia } from '../services/storage';
 import { FullScreenGallery } from '../components/FullScreenGallery';
+import { StyledDialog } from '../components/StyledDialog';
 import { getOrderedMedia } from '../utils/media';
 import { VideoPoster } from '../components/VideoPoster';
 
@@ -76,6 +76,10 @@ export const DetailScreen: React.FC = () => {
   const [galleryVisible, setGalleryVisible] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
+  const [prevDiaryId, setPrevDiaryId] = useState<string | null>(null);
+  const [nextDiaryId, setNextDiaryId] = useState<string | null>(null);
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [errorDialogVisible, setErrorDialogVisible] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
 
@@ -84,8 +88,13 @@ export const DetailScreen: React.FC = () => {
     setLoadError(null);
 
     try {
-      const data = await getDiaryById(diaryId);
+      const [data, adjacentIds] = await Promise.all([
+        getDiaryById(diaryId),
+        getAdjacentDiaryIds(diaryId),
+      ]);
       setDiary(data);
+      setPrevDiaryId(adjacentIds.prevId);
+      setNextDiaryId(adjacentIds.nextId);
     } catch (error) {
       console.error('Failed to load diary:', error);
       setDiary(null);
@@ -102,29 +111,21 @@ export const DetailScreen: React.FC = () => {
   );
 
   const handleDelete = () => {
-    Alert.alert(
-      '确认删除',
-      '确定要删除这篇日记吗？此操作不可恢复。',
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (diary) {
-                await deleteDiaryMedia(diary.media);
-                await deleteDiary(diaryId);
-              }
-              navigation.goBack();
-            } catch (error) {
-              console.error('Failed to delete diary:', error);
-              Alert.alert('错误', '删除失败');
-            }
-          },
-        },
-      ]
-    );
+    setDeleteDialogVisible(true);
+  };
+
+  const confirmDelete = async () => {
+    setDeleteDialogVisible(false);
+    try {
+      if (diary) {
+        await deleteDiaryMedia(diary.media);
+        await deleteDiary(diaryId);
+      }
+      navigation.goBack();
+    } catch (error) {
+      console.error('Failed to delete diary:', error);
+      setErrorDialogVisible(true);
+    }
   };
 
   const openGallery = (index: number) => {
@@ -278,6 +279,7 @@ export const DetailScreen: React.FC = () => {
             {diary.content ? (
               <View style={styles.card}>
                 <Text style={styles.contentText}>{diary.content}</Text>
+                <Text style={styles.charCount}>{diary.content.length} 字</Text>
               </View>
             ) : null}
 
@@ -290,6 +292,24 @@ export const DetailScreen: React.FC = () => {
                 最后修改: {formatDateFull(diary.updatedAt)}
               </Text>
             )}
+
+            {/* Navigation buttons at bottom */}
+            <View style={styles.bottomNav}>
+              <TouchableOpacity
+                onPress={() => prevDiaryId && navigation.navigate('Detail', { diaryId: prevDiaryId })}
+                disabled={!prevDiaryId}
+                style={[styles.bottomNavButton, !prevDiaryId && styles.bottomNavButtonDisabled]}
+              >
+                <Text style={[styles.bottomNavText, !prevDiaryId && styles.bottomNavTextDisabled]}>◀ 上一篇</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => nextDiaryId && navigation.navigate('Detail', { diaryId: nextDiaryId })}
+                disabled={!nextDiaryId}
+                style={[styles.bottomNavButton, !nextDiaryId && styles.bottomNavButtonDisabled]}
+              >
+                <Text style={[styles.bottomNavText, !nextDiaryId && styles.bottomNavTextDisabled]}>下一篇 ▶</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.bottomPadding} />
@@ -302,6 +322,27 @@ export const DetailScreen: React.FC = () => {
         visible={galleryVisible}
         onClose={() => setGalleryVisible(false)}
         dateInfo={formatDateFull(diary.createdAt)}
+      />
+
+      <StyledDialog
+        visible={deleteDialogVisible}
+        title="确认删除"
+        message="确定要删除这篇日记吗？此操作不可恢复。"
+        buttons={[
+          { text: '取消', style: 'cancel', onPress: () => setDeleteDialogVisible(false) },
+          { text: '删除', style: 'destructive', onPress: confirmDelete },
+        ]}
+        onDismiss={() => setDeleteDialogVisible(false)}
+      />
+
+      <StyledDialog
+        visible={errorDialogVisible}
+        title="错误"
+        message="删除失败"
+        buttons={[
+          { text: '确定', style: 'default', onPress: () => setErrorDialogVisible(false) },
+        ]}
+        onDismiss={() => setErrorDialogVisible(false)}
       />
     </View>
   );
@@ -384,6 +425,24 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     gap: 20,
+  },
+  navButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  navButton: {
+    paddingVertical: 4,
+  },
+  navButtonDisabled: {
+    opacity: 0.4,
+  },
+  navButtonText: {
+    fontSize: 14,
+    color: BRAND_GOLD,
+    fontWeight: '500',
+  },
+  navButtonTextDisabled: {
+    color: TEXT_MUTED,
   },
   actionButton: {
     paddingVertical: 4,
@@ -486,12 +545,12 @@ const styles = StyleSheet.create({
   artisticMonth: {
     fontSize: 20,
     color: TEXT_SECONDARY,
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
   },
   artisticYear: {
     fontSize: 16,
     color: TEXT_MUTED,
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
     marginTop: 4,
   },
   card: {
@@ -518,7 +577,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: TEXT_PRIMARY,
     lineHeight: 28,
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
   },
   watermark: {
     alignItems: 'center',
@@ -537,6 +596,41 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     fontStyle: 'italic',
+  },
+  charCount: {
+    fontSize: 12,
+    color: TEXT_MUTED,
+    textAlign: 'right',
+    marginTop: 12,
+  },
+  bottomNav: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 32,
+    marginTop: 32,
+    marginBottom: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: 'rgba(253, 252, 251, 0.95)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(210, 195, 175, 0.3)',
+  },
+  bottomNavButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  bottomNavButtonDisabled: {
+    opacity: 0.4,
+  },
+  bottomNavText: {
+    fontSize: 15,
+    color: BRAND_GOLD,
+    fontWeight: '500',
+  },
+  bottomNavTextDisabled: {
+    color: TEXT_MUTED,
   },
   bottomPadding: {
     height: 40,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,17 +7,16 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Tag } from '../types';
-import { getAllTags, createTag, deleteTag, addTagToDiary, removeTagFromDiary, getTagsForDiary } from '../services/database';
+import { getAllTags, createTag, deleteTag } from '../services/database';
 
 interface TagEditorProps {
-  diaryId?: string;
   selectedTags: Tag[];
   onTagsChange: (tags: Tag[]) => void;
 }
 
 export const TagEditor: React.FC<TagEditorProps> = ({
-  diaryId,
   selectedTags,
   onTagsChange,
 }) => {
@@ -25,9 +24,12 @@ export const TagEditor: React.FC<TagEditorProps> = ({
   const [showInput, setShowInput] = useState(false);
   const [newTagName, setNewTagName] = useState('');
 
-  useEffect(() => {
-    loadAllTags();
-  }, []);
+  // Reload tags when screen comes into focus (e.g., after returning from deleting a tag)
+  useFocusEffect(
+    useCallback(() => {
+      loadAllTags();
+    }, [])
+  );
 
   const loadAllTags = async () => {
     try {
@@ -43,10 +45,6 @@ export const TagEditor: React.FC<TagEditorProps> = ({
       return; // Already selected
     }
     onTagsChange([...selectedTags, tag]);
-  };
-
-  const handleRemoveTag = (tagId: string) => {
-    onTagsChange(selectedTags.filter((t) => t.id !== tagId));
   };
 
   const handleCreateTag = async () => {
@@ -73,8 +71,12 @@ export const TagEditor: React.FC<TagEditorProps> = ({
   const handleDeleteTag = async (tagId: string) => {
     try {
       await deleteTag(tagId);
-      setAllTags(allTags.filter((t) => t.id !== tagId));
-      handleRemoveTag(tagId);
+      // Update allTags locally
+      const newAllTags = allTags.filter((t) => t.id !== tagId);
+      setAllTags(newAllTags);
+      // Also update selectedTags locally before notifying parent
+      const newSelectedTags = selectedTags.filter((t) => t.id !== tagId);
+      onTagsChange(newSelectedTags);
     } catch (error) {
       console.error('Failed to delete tag:', error);
     }
@@ -123,7 +125,7 @@ export const TagEditor: React.FC<TagEditorProps> = ({
             <TouchableOpacity
               key={tag.id}
               style={[styles.tag, { backgroundColor: tag.color + '20', borderColor: tag.color }]}
-              onPress={() => handleRemoveTag(tag.id)}
+              onPress={() => handleDeleteTag(tag.id)}
             >
               <Text style={[styles.tagText, { color: tag.color }]}>{tag.name}</Text>
               <Text style={[styles.removeIcon, { color: tag.color }]}>×</Text>

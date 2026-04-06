@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types';
 import { BackupCancelledError, exportBackup, importBackup } from '../services/backup';
 import { getAllDiaries } from '../services/database';
+import { StyledDialog } from '../components/StyledDialog';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
 
@@ -14,61 +15,63 @@ export const SettingsScreen: React.FC = () => {
   const [exporting, setExporting] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
+  // Dialog states
+  const [noDiariesDialogVisible, setNoDiariesDialogVisible] = useState(false);
+  const [exportSuccessDialogVisible, setExportSuccessDialogVisible] = useState(false);
+  const [exportErrorDialogVisible, setExportErrorDialogVisible] = useState(false);
+  const [importSuccessDialogVisible, setImportSuccessDialogVisible] = useState(false);
+  const [importErrorDialogVisible, setImportErrorDialogVisible] = useState(false);
+  const [importConfirmDialogVisible, setImportConfirmDialogVisible] = useState(false);
+  const [lastExportResult, setLastExportResult] = useState({ diaryCount: 0, mediaCount: 0 });
+  const [lastImportResult, setLastImportResult] = useState({ diaryCount: 0, mediaCount: 0 });
+
   const handleExport = async () => {
     try {
       const diaries = await getAllDiaries();
       if (diaries.length === 0) {
-        Alert.alert('提示', '没有日记可导出');
+        setNoDiariesDialogVisible(true);
         return;
       }
 
       setExporting(true);
       const result = await exportBackup();
-      Alert.alert(
-        '导出完成',
-        `已导出 ${result.diaryCount} 篇日记和 ${result.mediaCount} 个媒体文件。\n\n请选择你刚保存的备份文件夹，在另一台设备上通过“导入备份”恢复。`
-      );
+      setLastExportResult(result);
+      setExportSuccessDialogVisible(true);
     } catch (error) {
       if (error instanceof BackupCancelledError) {
+        setExporting(false);
         return;
       }
 
       console.error('Export failed:', error);
-      Alert.alert('错误', '导出失败');
+      setExportErrorDialogVisible(true);
     } finally {
       setExporting(false);
     }
   };
 
   const runImport = async () => {
+    setImportConfirmDialogVisible(false);
     try {
       setRestoring(true);
       const result = await importBackup();
-      Alert.alert(
-        '导入完成',
-        `已恢复 ${result.diaryCount} 篇日记和 ${result.mediaCount} 个媒体文件。`
-      );
+      setLastImportResult(result);
+      setImportSuccessDialogVisible(true);
     } catch (error) {
       if (error instanceof BackupCancelledError) {
+        setRestoring(false);
         return;
       }
 
       console.error('Import failed:', error);
-      Alert.alert('错误', '导入失败');
+      setImportErrorDialogVisible(true);
     } finally {
       setRestoring(false);
     }
   };
 
   const handleImport = () => {
-    Alert.alert(
-      '导入备份',
-      '导入会覆盖当前设备上的全部日记和媒体，是否继续？',
-      [
-        { text: '取消', style: 'cancel' },
-        { text: '继续', style: 'destructive', onPress: runImport },
-      ]
-    );
+    setImportConfirmDialogVisible(true);
   };
 
   return (
@@ -93,7 +96,7 @@ export const SettingsScreen: React.FC = () => {
             <View style={styles.itemLeft}>
               <Text style={styles.itemText}>导出日记备份</Text>
               <Text style={styles.itemDescription}>
-                导出为JSON文件，可用于数据备份
+                导出为 ZIP 文件，包含 JSON 和所有媒体文件
               </Text>
             </View>
             {exporting ? (
@@ -111,7 +114,7 @@ export const SettingsScreen: React.FC = () => {
             <View style={styles.itemLeft}>
               <Text style={styles.itemText}>导入完整备份</Text>
               <Text style={styles.itemDescription}>
-                选择导出的备份文件夹，恢复日记和全部媒体文件
+                选择导出的 .zip 备份文件，恢复日记和全部媒体文件
               </Text>
             </View>
             {restoring ? (
@@ -134,6 +137,63 @@ export const SettingsScreen: React.FC = () => {
           </View>
         </View>
       </View>
+
+      {/* No diaries to export dialog */}
+      <StyledDialog
+        visible={noDiariesDialogVisible}
+        title="提示"
+        message="没有日记可导出"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setNoDiariesDialogVisible(false) }]}
+        onDismiss={() => setNoDiariesDialogVisible(false)}
+      />
+
+      {/* Export success dialog */}
+      <StyledDialog
+        visible={exportSuccessDialogVisible}
+        title="导出完成"
+        message={`已导出 ${lastExportResult.diaryCount} 篇日记和 ${lastExportResult.mediaCount} 个媒体文件。\n\n请选择你刚保存的备份文件夹，在另一台设备上通过"导入备份"恢复。`}
+        buttons={[{ text: '确定', style: 'default', onPress: () => setExportSuccessDialogVisible(false) }]}
+        onDismiss={() => setExportSuccessDialogVisible(false)}
+      />
+
+      {/* Export error dialog */}
+      <StyledDialog
+        visible={exportErrorDialogVisible}
+        title="错误"
+        message="导出失败"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setExportErrorDialogVisible(false) }]}
+        onDismiss={() => setExportErrorDialogVisible(false)}
+      />
+
+      {/* Import success dialog */}
+      <StyledDialog
+        visible={importSuccessDialogVisible}
+        title="导入完成"
+        message={`已恢复 ${lastImportResult.diaryCount} 篇日记和 ${lastImportResult.mediaCount} 个媒体文件。`}
+        buttons={[{ text: '确定', style: 'default', onPress: () => setImportSuccessDialogVisible(false) }]}
+        onDismiss={() => setImportSuccessDialogVisible(false)}
+      />
+
+      {/* Import error dialog */}
+      <StyledDialog
+        visible={importErrorDialogVisible}
+        title="错误"
+        message="导入失败"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setImportErrorDialogVisible(false) }]}
+        onDismiss={() => setImportErrorDialogVisible(false)}
+      />
+
+      {/* Import confirm dialog */}
+      <StyledDialog
+        visible={importConfirmDialogVisible}
+        title="导入备份（覆盖）"
+        message="导入将删除当前所有日记和媒体文件，替换为备份内容。此操作不可逆，建议先导出当前数据。"
+        buttons={[
+          { text: '取消', style: 'cancel', onPress: () => setImportConfirmDialogVisible(false) },
+          { text: '确认导入', style: 'destructive', onPress: runImport },
+        ]}
+        onDismiss={() => setImportConfirmDialogVisible(false)}
+      />
     </SafeAreaView>
   );
 };

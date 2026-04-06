@@ -1,19 +1,24 @@
-import { Directory, File } from 'expo-file-system';
+import { getInfoAsync, makeDirectoryAsync, documentDirectory, cacheDirectory, readAsStringAsync, writeAsStringAsync, StorageAccessFramework } from 'expo-file-system/legacy';
+import JSZip from 'jszip';
+import * as Sharing from 'expo-sharing';
+import { getDocumentAsync, DocumentPickerResult } from 'expo-document-picker';
 import { DiaryEntry, MediaItem, Tag } from '../types';
 import { generateId } from '../utils/uuid';
-import { deleteMedia, saveMedia } from './storage';
-import { getAllDiaries, replaceAllDiaries, getAllTags } from './database';
+import { deleteMedia } from './storage';
+import { getAllDiaries, getAllTags, replaceAllData } from '../services/database';
 import { getMediaFileExtension } from '../utils/media';
 
-const BACKUP_VERSION = 1;
+const BACKUP_VERSION = 2;
 const BACKUP_FOLDER_PREFIX = 'vivido-backup';
 const BACKUP_MANIFEST_NAME = 'backup-manifest.json';
-const BACKUP_MEDIA_DIRECTORY = 'media';
+const BACKUP_MEDIA_FOLDER = 'media';
 
 interface BackupManifestMedia {
   id: string;
   type: MediaItem['type'];
+  /** Relative path within the backup ZIP */
   relativePath: string;
+  mimeType: string;
   thumbnailRelativePath?: string;
   position?: number;
 }
@@ -38,6 +43,8 @@ interface BackupManifestDiary {
 interface BackupManifest {
   version: number;
   exportedAt: string;
+  appVersion: string;
+  tags: BackupManifestTag[];
   diaries: BackupManifestDiary[];
 }
 
@@ -48,63 +55,42 @@ export class BackupCancelledError extends Error {
   }
 }
 
-const ensureDirectory = (directory: Directory): void => {
-  if (!directory.exists) {
-    directory.create({ intermediates: true, idempotent: true });
-  }
-};
-
-const deleteIfExists = (file: File): void => {
-  if (file.exists) {
-    file.delete();
-  }
-};
-
-const getRelativeFile = (directory: Directory, relativePath: string): File => {
-  return new File(directory, ...relativePath.split('/'));
-};
-
-const isUserCancelledError = (error: unknown): boolean => {
-  return error instanceof Error && /cancel/i.test(error.message);
-};
-
-const pickDirectory = async (): Promise<Directory> => {
-  try {
-    return await Directory.pickDirectoryAsync();
-  } catch (error) {
-    if (isUserCancelledError(error)) {
-      throw new BackupCancelledError();
-    }
-    throw error;
-  }
-};
-
-const buildBackupFileName = (media: MediaItem, suffix = ''): string => {
-  return `${media.id}${suffix}.${getMediaFileExtension(media)}`;
-};
-
-const getBackupFileNameFromUri = (id: string, uri: string, suffix = ''): string => {
-  const extensionMatch = uri.split('?')[0].match(/\.([a-zA-Z0-9]+)$/);
-  const extension = extensionMatch?.[1]?.toLowerCase() ?? 'dat';
-  return `${id}${suffix}.${extension}`;
-};
-
-const getImportedFileName = (relativePath: string): string => {
-  const match = relativePath.split('/').pop()?.match(/\.([a-zA-Z0-9]+)$/);
-  const extension = match?.[1]?.toLowerCase() ?? 'dat';
-  return `${generateId()}.${extension}`;
-};
-
 const parseBackupManifest = (rawContent: string): BackupManifest => {
   const parsed = JSON.parse(rawContent) as Partial<BackupManifest>;
 
-  if (parsed.version !== BACKUP_VERSION || !Array.isArray(parsed.diaries)) {
+  if (
+    (parsed.version !== 1 && parsed.version !== BACKUP_VERSION) ||
+    !Array.isArray(parsed.diaries)
+  ) {
     throw new Error('Unsupported backup format');
   }
+
+  const parsedTags = Array.isArray(parsed.tags) ? parsed.tags : [];
+  const normalizeTag = (tag: unknown): BackupManifestTag => {
+    if (
+      !tag ||
+      typeof tag !== 'object' ||
+      typeof (tag as BackupManifestTag).id !== 'string' ||
+      typeof (tag as BackupManifestTag).name !== 'string' ||
+      typeof (tag as BackupManifestTag).color !== 'string' ||
+      typeof (tag as BackupManifestTag).createdAt !== 'number'
+    ) {
+      throw new Error('Backup manifest tag entry is invalid');
+    }
+
+    return {
+      id: (tag as BackupManifestTag).id,
+      name: (tag as BackupManifestTag).name,
+      color: (tag as BackupManifestTag).color,
+      createdAt: (tag as BackupManifestTag).createdAt,
+    };
+  };
 
   return {
     version: parsed.version,
     exportedAt: typeof parsed.exportedAt === 'string' ? parsed.exportedAt : new Date(0).toISOString(),
+    appVersion: parsed.appVersion || '1.0.0',
+    tags: parsedTags.map(normalizeTag),
     diaries: parsed.diaries.map((diary) => {
       if (
         !diary ||
@@ -138,17 +124,12 @@ const parseBackupManifest = (rawContent: string): BackupManifest => {
             id: media.id,
             type: media.type,
             relativePath: media.relativePath,
-            thumbnailRelativePath:
-              typeof media.thumbnailRelativePath === 'string' ? media.thumbnailRelativePath : undefined,
-            position: typeof media.position === 'number' ? media.position : undefined,
+            mimeType: media.mimeType || (media.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+            thumbnailRelativePath: media.thumbnailRelativePath,
+            position: media.position,
           };
         }),
-        tags: (diary.tags || []).map((tag) => ({
-          id: tag.id,
-          name: tag.name,
-          color: tag.color,
-          createdAt: tag.createdAt,
-        })),
+        tags: Array.isArray(diary.tags) ? diary.tags.map(normalizeTag) : [],
       };
     }),
   };
@@ -160,18 +141,28 @@ export const exportBackup = async (): Promise<{
   mediaCount: number;
 }> => {
   const diaries = await getAllDiaries();
-  const destinationRoot = await pickDirectory();
+  const tags = await getAllTags();
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const backupDirectory = new Directory(destinationRoot, `${BACKUP_FOLDER_PREFIX}-${timestamp}`);
-  const mediaDirectory = new Directory(backupDirectory, BACKUP_MEDIA_DIRECTORY);
+  const zipFileName = `${BACKUP_FOLDER_PREFIX}-${timestamp}.zip`;
 
-  ensureDirectory(backupDirectory);
-  ensureDirectory(mediaDirectory);
+  if (!cacheDirectory) {
+    throw new Error('Cache directory not available');
+  }
 
-  let mediaCount = 0;
-  const manifest: BackupManifest = {
+  const zip = new JSZip();
+
+  // Add manifest JSON
+  const manifestData: BackupManifest = {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
+    appVersion: '1.0.0',
+    tags: tags.map((tag) => ({
+      id: tag.id,
+      name: tag.name,
+      color: tag.color,
+      createdAt: tag.createdAt,
+    })),
     diaries: diaries.map((diary) => ({
       id: diary.id,
       title: diary.title,
@@ -179,31 +170,14 @@ export const exportBackup = async (): Promise<{
       createdAt: diary.createdAt,
       updatedAt: diary.updatedAt,
       media: diary.media.map((media) => {
-        const relativePath = `${BACKUP_MEDIA_DIRECTORY}/${buildBackupFileName(media)}`;
-        const destinationFile = getRelativeFile(backupDirectory, relativePath);
-
-        deleteIfExists(destinationFile);
-        new File(media.uri).copy(destinationFile);
-
-        let thumbnailRelativePath: string | undefined;
-        if (media.thumbnail) {
-          thumbnailRelativePath = `${BACKUP_MEDIA_DIRECTORY}/${getBackupFileNameFromUri(
-            media.id,
-            media.thumbnail,
-            '-thumbnail'
-          )}`;
-          const thumbnailFile = getRelativeFile(backupDirectory, thumbnailRelativePath);
-          deleteIfExists(thumbnailFile);
-          new File(media.thumbnail).copy(thumbnailFile);
-        }
-
-        mediaCount += 1;
-
+        const ext = getMediaFileExtension(media);
+        const fileName = `${media.id}.${ext}`;
         return {
           id: media.id,
           type: media.type,
-          relativePath,
-          thumbnailRelativePath,
+          relativePath: `${BACKUP_MEDIA_FOLDER}/${fileName}`,
+          mimeType: media.type === 'video' ? 'video/mp4' : 'image/jpeg',
+          thumbnailRelativePath: media.thumbnail ? `${BACKUP_MEDIA_FOLDER}/${media.id}_thumb.${ext}` : undefined,
           position: media.position,
         };
       }),
@@ -216,13 +190,71 @@ export const exportBackup = async (): Promise<{
     })),
   };
 
-  const manifestFile = new File(backupDirectory, BACKUP_MANIFEST_NAME);
-  deleteIfExists(manifestFile);
-  manifestFile.create({ intermediates: true, overwrite: true });
-  manifestFile.write(JSON.stringify(manifest, null, 2));
+  zip.file(BACKUP_MANIFEST_NAME, JSON.stringify(manifestData, null, 2));
+
+  // Add media files
+  let mediaCount = 0;
+  for (const diary of diaries) {
+    for (const media of diary.media) {
+      try {
+        const ext = getMediaFileExtension(media);
+        const fileName = `${media.id}.${ext}`;
+        const mediaData = await readAsStringAsync(media.uri, { encoding: 'base64' });
+        zip.file(`${BACKUP_MEDIA_FOLDER}/${fileName}`, mediaData, { base64: true });
+
+        if (media.thumbnail) {
+          const thumbData = await readAsStringAsync(media.thumbnail, { encoding: 'base64' });
+          zip.file(`${BACKUP_MEDIA_FOLDER}/${media.id}_thumb.${ext}`, thumbData, { base64: true });
+        }
+        mediaCount += 1;
+      } catch (err) {
+        console.warn(`Failed to add media ${media.id}:`, err);
+      }
+    }
+  }
+
+  // Generate ZIP file
+  const zipContent = await zip.generateAsync({ type: 'base64' });
+
+  // Write ZIP to cache directory first
+  const zipPath = `${cacheDirectory}${zipFileName}`;
+  await writeAsStringAsync(zipPath, zipContent, { encoding: 'base64' });
+
+  // Try to save to public Downloads using SAF (Storage Access Framework)
+  try {
+    // Request permission to access Downloads directory
+    const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+    if (permissions.granted) {
+      const dirUri = permissions.directoryUri;
+      // Create the backup file in the selected directory
+      const fileUri = await StorageAccessFramework.createFileAsync(
+        dirUri,
+        zipFileName,
+        'application/zip'
+      );
+      // Write content to the file (alias for writeAsStringAsync)
+      await StorageAccessFramework.writeAsStringAsync(fileUri, zipContent, {
+        encoding: 'base64',
+      });
+      console.log('Backup saved to Downloads via SAF:', fileUri);
+    } else {
+      console.log('SAF permission not granted');
+    }
+  } catch (err) {
+    console.warn('Failed to save via SAF:', err);
+  }
+
+  // Share the ZIP file
+  const isAvailable = await Sharing.isAvailableAsync();
+  if (isAvailable) {
+    await Sharing.shareAsync(zipPath, {
+      mimeType: 'application/zip',
+      dialogTitle: '导出日记备份',
+    });
+  }
 
   return {
-    uri: backupDirectory.uri,
+    uri: zipPath,
     diaryCount: diaries.length,
     mediaCount,
   };
@@ -232,56 +264,102 @@ export const importBackup = async (): Promise<{
   diaryCount: number;
   mediaCount: number;
 }> => {
-  const backupDirectory = await pickDirectory();
-  const manifestFile = new File(backupDirectory, BACKUP_MANIFEST_NAME);
+  // Pick the backup ZIP file
+  const result: DocumentPickerResult = await getDocumentAsync({
+    type: ['application/zip', 'application/x-zip-compressed'],
+    multiple: false,
+  });
 
-  if (!manifestFile.exists) {
-    throw new Error('Backup manifest not found in selected folder');
+  if (result.canceled || !result.assets || result.assets.length === 0) {
+    throw new BackupCancelledError();
   }
 
-  const manifest = parseBackupManifest(await manifestFile.text());
+  const zipFile = result.assets[0];
+
+  // Read ZIP file content
+  const zipContent = await readAsStringAsync(zipFile.uri, { encoding: 'base64' });
+
+  // Load ZIP
+  const zip = await JSZip.loadAsync(zipContent, { base64: true });
+
+  // Find and parse manifest
+  const manifestFile = zip.file(BACKUP_MANIFEST_NAME);
+  if (!manifestFile) {
+    throw new Error('Invalid backup: manifest not found');
+  }
+
+  const manifestContent = await manifestFile.async('string');
+  const manifest = parseBackupManifest(manifestContent);
+
   const currentDiaries = await getAllDiaries();
   const importedFiles: string[] = [];
   let mediaCount = 0;
 
   try {
     const importedEntries: DiaryEntry[] = [];
+    const importedTags = new Map<string, Tag>();
 
+    // Import all tags from manifest
+    for (const tag of manifest.tags) {
+      importedTags.set(tag.id, tag);
+    }
+
+    // Ensure media directory exists
+    const mediaDestDir = documentDirectory + 'media/';
+    const mediaDirInfo = await getInfoAsync(mediaDestDir);
+    if (!mediaDirInfo.exists) {
+      await makeDirectoryAsync(mediaDestDir, { intermediates: true });
+    }
+
+    // Import each diary
     for (const diary of manifest.diaries) {
       const importedMedia: MediaItem[] = [];
 
       for (const media of diary.media) {
-        const sourceFile = getRelativeFile(backupDirectory, media.relativePath);
-        if (!sourceFile.exists) {
+        const mediaFile = zip.file(media.relativePath);
+        if (!mediaFile) {
           throw new Error(`Missing media file: ${media.relativePath}`);
         }
 
-        const savedUri = await saveMedia(sourceFile.uri, getImportedFileName(media.relativePath));
-        importedFiles.push(savedUri);
+        // Generate new filename to avoid conflicts
+        const ext = media.mimeType === 'video/mp4' ? 'mp4' : 'jpg';
+        const newFileName = `${generateId()}.${ext}`;
+        const destPath = `${mediaDestDir}${newFileName}`;
+
+        // Extract and save media file
+        const mediaData = await mediaFile.async('base64');
+        await writeAsStringAsync(destPath, mediaData, { encoding: 'base64' });
+        importedFiles.push(destPath);
 
         let thumbnailUri: string | undefined;
         if (media.thumbnailRelativePath) {
-          const sourceThumbnailFile = getRelativeFile(backupDirectory, media.thumbnailRelativePath);
-          if (!sourceThumbnailFile.exists) {
-            throw new Error(`Missing thumbnail file: ${media.thumbnailRelativePath}`);
+          const thumbFile = zip.file(media.thumbnailRelativePath);
+          if (thumbFile) {
+            const thumbFileName = `${generateId()}_thumb.jpg`;
+            thumbnailUri = `${mediaDestDir}${thumbFileName}`;
+            const thumbData = await thumbFile.async('base64');
+            await writeAsStringAsync(thumbnailUri, thumbData, { encoding: 'base64' });
+            importedFiles.push(thumbnailUri);
           }
-
-          thumbnailUri = await saveMedia(
-            sourceThumbnailFile.uri,
-            getImportedFileName(media.thumbnailRelativePath)
-          );
-          importedFiles.push(thumbnailUri);
         }
 
         importedMedia.push({
           id: media.id,
           type: media.type,
-          uri: savedUri,
+          uri: destPath,
           thumbnail: thumbnailUri,
           position: media.position,
         });
         mediaCount += 1;
       }
+
+      // Collect tags from this diary
+      const diaryTags = (diary.tags || []).map((tag) => {
+        if (!importedTags.has(tag.id)) {
+          importedTags.set(tag.id, tag);
+        }
+        return tag;
+      });
 
       importedEntries.push({
         id: diary.id,
@@ -290,12 +368,14 @@ export const importBackup = async (): Promise<{
         createdAt: diary.createdAt,
         updatedAt: diary.updatedAt,
         media: importedMedia,
-        tags: diary.tags || [],
+        tags: diaryTags,
       });
     }
 
-    await replaceAllDiaries(importedEntries);
+    // Replace all data in database
+    await replaceAllData(importedEntries, Array.from(importedTags.values()));
 
+    // Delete old media files
     for (const diary of currentDiaries) {
       for (const media of diary.media) {
         await deleteMedia(media.uri);
@@ -304,15 +384,16 @@ export const importBackup = async (): Promise<{
         }
       }
     }
-
-    return {
-      diaryCount: importedEntries.length,
-      mediaCount,
-    };
   } catch (error) {
+    // Clean up imported files on error
     for (const uri of importedFiles) {
       await deleteMedia(uri);
     }
     throw error;
   }
+
+  return {
+    diaryCount: manifest.diaries.length,
+    mediaCount,
+  };
 };

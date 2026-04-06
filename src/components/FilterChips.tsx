@@ -11,7 +11,6 @@ const TIME_FILTERS: { key: TimeFilter; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'week', label: '本周' },
   { key: 'month', label: '上个月' },
-  { key: 'sameDayLastYear', label: '那年今日' },
 ];
 
 export const FilterChips: React.FC<FilterChipsProps> = ({ selected, onSelect }) => {

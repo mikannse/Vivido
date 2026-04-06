@@ -3,6 +3,8 @@ import { MediaItem } from '../types';
 
 const MEDIA_DIR = documentDirectory + 'media/';
 
+export const MEDIA_DIR_PATH = MEDIA_DIR;
+
 export const ensureMediaDir = async (): Promise<void> => {
   const dirInfo = await getInfoAsync(MEDIA_DIR);
   if (!dirInfo.exists) {

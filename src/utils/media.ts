@@ -22,15 +22,6 @@ const getExtensionFromValue = (value?: string | null): string | null => {
   return match ? match[1].toLowerCase() : null;
 };
 
-export const getMediaFileExtension = (item: Pick<MediaItem, 'type' | 'uri' | 'fileName' | 'mimeType'>): string => {
-  return (
-    getExtensionFromValue(item.fileName) ??
-    getExtensionFromValue(item.uri) ??
-    (item.mimeType ? MIME_EXTENSION_MAP[item.mimeType] : null) ??
-    (item.type === 'video' ? 'mp4' : 'jpg')
-  );
-};
-
 export const assignMediaPositions = <T extends MediaItem>(media: T[]): T[] => {
   return media.map((item, index) => ({
     ...item,
@@ -47,4 +38,25 @@ export const getOrderedMedia = <T extends MediaItem>(media: T[]): T[] => {
       return leftPosition - rightPosition;
     })
     .map(({ item }) => item);
+};
+
+// Check if media item is a GIF
+export const isGif = (item: Pick<MediaItem, 'uri' | 'fileName' | 'mimeType'>): boolean => {
+  if (item.mimeType?.toLowerCase().includes('gif')) return true;
+  if (item.fileName?.toLowerCase().endsWith('.gif')) return true;
+  if (item.uri.toLowerCase().endsWith('.gif')) return true;
+  return false;
+};
+
+// Get media file extension, with special handling for GIF
+export const getMediaFileExtension = (item: Pick<MediaItem, 'type' | 'uri' | 'fileName' | 'mimeType'>): string => {
+  // Check for GIF first
+  if (isGif(item)) return 'gif';
+
+  return (
+    getExtensionFromValue(item.fileName) ??
+    getExtensionFromValue(item.uri) ??
+    (item.mimeType ? MIME_EXTENSION_MAP[item.mimeType] : null) ??
+    (item.type === 'video' ? 'mp4' : 'jpg')
+  );
 };

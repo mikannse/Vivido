@@ -6,9 +6,9 @@ export const typography = {
     fontFamily: 'SmileySans',
   } as TextStyle,
 
-  // 正文字体 - LXGWWenKai
+  // 正文字体 - LXGWWenKai Lite
   body: {
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
   } as TextStyle,
 
   // 应用名称字体 - PlayfairDisplay

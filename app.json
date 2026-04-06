@@ -31,7 +31,8 @@
       "expo-sqlite",
       "expo-image",
       "expo-sharing",
-      "expo-font"
+      "expo-font",
+      "expo-build-properties"
     ]
   }
 }

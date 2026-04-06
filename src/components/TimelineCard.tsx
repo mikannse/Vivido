@@ -309,12 +309,12 @@ const styles = StyleSheet.create({
   monthText: {
     fontSize: 13,
     color: TEXT_SECONDARY,
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
   },
   weekDayText: {
     fontSize: 11,
     color: TEXT_SECONDARY,
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
     marginTop: 1,
   },
   textContent: {
@@ -331,7 +331,7 @@ const styles = StyleSheet.create({
   preview: {
     fontSize: 14,
     color: TEXT_SECONDARY,
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
     lineHeight: 20,
   },
   mediaCountBadge: {

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { formatLocalDateKey } from '../utils/date';
 
 interface HeatmapDay {
   date: string;
@@ -21,10 +22,10 @@ const COLORS = {
 };
 
 const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
-const DAYS = ['日', '一', '三', '五'];
+const DAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
 export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ data, onDayPress }) => {
-  const { weeks, monthLabels } = useMemo(() => {
+  const { weeks, monthLabels, gridWidth } = useMemo(() => {
     const today = new Date();
     const startDate = new Date(today);
     startDate.setDate(startDate.getDate() - 364); // 52 weeks ago
@@ -41,7 +42,7 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ data, onDayPre
     const current = new Date(startDate);
 
     while (current <= today) {
-      const dateStr = current.toISOString().split('T')[0];
+      const dateStr = formatLocalDateKey(current);
       const count = data.get(dateStr) || 0;
       let level: 0 | 1 | 2 | 3 | 4 = 0;
       if (count >= 5) level = 4;
@@ -70,7 +71,11 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ data, onDayPre
       weeksArr.push(currentWeek);
     }
 
-    return { weeks: weeksArr, monthLabels: monthLabelArr };
+    return {
+      weeks: weeksArr,
+      monthLabels: monthLabelArr,
+      gridWidth: weeksArr.length * 14,
+    };
   }, [data]);
 
   const getColor = (level: 0 | 1 | 2 | 3 | 4) => {
@@ -85,40 +90,40 @@ export const ActivityHeatmap: React.FC<ActivityHeatmapProps> = ({ data, onDayPre
 
   return (
     <View style={styles.container}>
-      <View style={styles.monthLabelsContainer}>
-        <View style={styles.dayLabelsPlaceholder} />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.monthLabels}>
-            {monthLabels.map((m, i) => (
-              <Text key={i} style={[styles.monthLabel, { left: m.weekIndex * 14 }]}>
-                {m.label}
-              </Text>
+      <View style={styles.chartRow}>
+        <View>
+          <View style={styles.dayLabelsPlaceholder} />
+          <View style={styles.dayLabels}>
+            {DAYS.map((day, i) => (
+              <Text key={i} style={styles.dayLabel}>{day}</Text>
             ))}
           </View>
-        </ScrollView>
-      </View>
-
-      <View style={styles.gridContainer}>
-        <View style={styles.dayLabels}>
-          {DAYS.map((day, i) => (
-            <Text key={i} style={styles.dayLabel}>{day}</Text>
-          ))}
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.grid}>
-            {weeks.map((week, weekIndex) => (
-              <View key={weekIndex} style={styles.week}>
-                {week.map((day, dayIndex) => (
-                  <TouchableOpacity
-                    key={`${weekIndex}-${dayIndex}`}
-                    style={[styles.cell, { backgroundColor: getColor(day.level) }]}
-                    onPress={() => day.count > 0 && onDayPress?.(day.date.toISOString().split('T')[0], day.count)}
-                    activeOpacity={0.7}
-                  />
-                ))}
-              </View>
-            ))}
+          <View>
+            <View style={[styles.monthLabels, { width: gridWidth }]}>
+              {monthLabels.map((m, i) => (
+                <Text key={i} style={[styles.monthLabel, { left: m.weekIndex * 14 }]}>
+                  {m.label}
+                </Text>
+              ))}
+            </View>
+
+            <View style={styles.grid}>
+              {weeks.map((week, weekIndex) => (
+                <View key={weekIndex} style={styles.week}>
+                  {week.map((day, dayIndex) => (
+                    <TouchableOpacity
+                      key={`${weekIndex}-${dayIndex}`}
+                      style={[styles.cell, { backgroundColor: getColor(day.level) }]}
+                      onPress={() => day.count > 0 && onDayPress?.(formatLocalDateKey(day.date), day.count)}
+                      activeOpacity={0.7}
+                    />
+                  ))}
+                </View>
+              ))}
+            </View>
           </View>
         </ScrollView>
       </View>
@@ -143,25 +148,23 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
   },
-  monthLabelsContainer: {
+  chartRow: {
     flexDirection: 'row',
-    marginBottom: 4,
   },
   dayLabelsPlaceholder: {
     width: 20,
+    height: 16,
+    marginBottom: 4,
   },
   monthLabels: {
     height: 16,
     position: 'relative',
-    width: 52 * 14, // 52 weeks * cell size
+    marginBottom: 4,
   },
   monthLabel: {
     position: 'absolute',
     fontSize: 10,
     color: '#827066',
-  },
-  gridContainer: {
-    flexDirection: 'row',
   },
   dayLabels: {
     width: 20,

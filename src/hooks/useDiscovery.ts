@@ -1,11 +1,13 @@
-import { useState, useCallback, useEffect } from 'react';
-import { DiaryEntry, Tag, TimeFilter, WordFrequency } from '../types';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { DiaryEntry, Tag, TimeFilter, WordFrequency, MonthFilter } from '../types';
 import {
   searchDiaries,
   getAllTags,
   getHeatmapData,
   getWordFrequency,
 } from '../services/database';
+
+const DEBOUNCE_MS = 300;
 
 interface UseDiscoveryReturn {
   // State
@@ -18,11 +20,15 @@ interface UseDiscoveryReturn {
   searchQuery: string;
   selectedTags: string[];
   timeFilter: TimeFilter;
+  selectedDate: string | null;
+  monthFilter: MonthFilter | null;
 
   // Actions
   setSearchQuery: (query: string) => void;
   setTimeFilter: (filter: TimeFilter) => void;
   toggleTag: (tagId: string) => void;
+  selectDate: (date: string | null) => void;
+  setMonthFilter: (filter: MonthFilter | null) => void;
   clearFilters: () => void;
   refresh: () => Promise<void>;
 }
@@ -35,8 +41,28 @@ export const useDiscovery = (): UseDiscoveryReturn => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQueryState] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [timeFilter, setTimeFilterState] = useState<TimeFilter>('all');
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [monthFilter, setMonthFilterState] = useState<MonthFilter | null>(null);
+
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce search query
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, DEBOUNCE_MS);
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [searchQuery]);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -44,10 +70,10 @@ export const useDiscovery = (): UseDiscoveryReturn => {
 
     try {
       const [diariesResult, tagsResult, heatmapResult, wordFreqResult] = await Promise.all([
-        searchDiaries(searchQuery, selectedTags, timeFilter),
+        searchDiaries(debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
         getAllTags(),
-        getHeatmapData(365),
-        getWordFrequency(1),
+        getHeatmapData(365, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
+        getWordFrequency(1, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
       ]);
 
       setDiaries(diariesResult);
@@ -57,7 +83,7 @@ export const useDiscovery = (): UseDiscoveryReturn => {
       // Convert word frequency to WordFrequency with levels
       const sortedWords = Array.from(wordFreqResult.entries())
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 30);
+        .slice(0, 10);
 
       const maxCount = sortedWords.length > 0 ? sortedWords[0][1] : 1;
       const wordCloud: WordFrequency[] = sortedWords.map(([word, count]) => {
@@ -76,7 +102,7 @@ export const useDiscovery = (): UseDiscoveryReturn => {
     } finally {
       setIsLoading(false);
     }
-  }, [searchQuery, selectedTags, timeFilter]);
+  }, [debouncedSearchQuery, selectedDate, selectedTags, timeFilter, monthFilter]);
 
   useEffect(() => {
     fetchData();
@@ -88,6 +114,8 @@ export const useDiscovery = (): UseDiscoveryReturn => {
 
   const setTimeFilter = useCallback((filter: TimeFilter) => {
     setTimeFilterState(filter);
+    setSelectedDate(null);
+    setMonthFilterState(null);
   }, []);
 
   const toggleTag = useCallback((tagId: string) => {
@@ -98,10 +126,28 @@ export const useDiscovery = (): UseDiscoveryReturn => {
     );
   }, []);
 
+  const selectDate = useCallback((date: string | null) => {
+    setSelectedDate(date);
+    setMonthFilterState(null);
+    if (date) {
+      setTimeFilterState('all');
+    }
+  }, []);
+
+  const setMonthFilter = useCallback((filter: MonthFilter | null) => {
+    setMonthFilterState(filter);
+    setSelectedDate(null);
+    if (filter) {
+      setTimeFilterState('all');
+    }
+  }, []);
+
   const clearFilters = useCallback(() => {
     setSearchQueryState('');
     setSelectedTags([]);
     setTimeFilterState('all');
+    setSelectedDate(null);
+    setMonthFilterState(null);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -118,9 +164,13 @@ export const useDiscovery = (): UseDiscoveryReturn => {
     searchQuery,
     selectedTags,
     timeFilter,
+    selectedDate,
+    monthFilter,
     setSearchQuery,
     setTimeFilter,
     toggleTag,
+    selectDate,
+    setMonthFilter,
     clearFilters,
     refresh,
   };

@@ -5,7 +5,6 @@ import {
   TextInput,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -13,12 +12,14 @@ import {
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { RootStackParamList, DiaryEntry, MediaItem, Tag } from '../types';
 import { getDiaryById, createDiary, updateDiary } from '../services/database';
-import { saveMedia, deleteDiaryMedia } from '../services/storage';
+import { saveMedia, deleteDiaryMedia, MEDIA_DIR_PATH } from '../services/storage';
 import { generateId } from '../utils/uuid';
 import { MediaPicker } from '../components/MediaPicker';
 import { TagEditor } from '../components/TagEditor';
+import { StyledDialog } from '../components/StyledDialog';
 import { assignMediaPositions, getMediaFileExtension, getOrderedMedia } from '../utils/media';
 import { formatDateInputValue, getWeekDayLabel, parseDateInputValue } from '../utils/date';
 
@@ -37,14 +38,74 @@ export const EditorScreen: React.FC = () => {
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [originalMedia, setOriginalMedia] = useState<MediaItem[]>([]);
   const [initialCreatedAt, setInitialCreatedAt] = useState(Date.now());
+
+  // Dialog states
+  const [notFoundDialogVisible, setNotFoundDialogVisible] = useState(false);
+  const [loadErrorDialogVisible, setLoadErrorDialogVisible] = useState(false);
+  const [emptyContentDialogVisible, setEmptyContentDialogVisible] = useState(false);
+  const [invalidDateDialogVisible, setInvalidDateDialogVisible] = useState(false);
+  const [saveErrorDialogVisible, setSaveErrorDialogVisible] = useState(false);
+  const [libraryPermissionDialogVisible, setLibraryPermissionDialogVisible] = useState(false);
+  const [unsavedDialogVisible, setUnsavedDialogVisible] = useState(false);
+
+  // Track unsaved changes
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
+
+  // Store initial values for change detection
+  const [initialTitle, setInitialTitle] = useState('');
+  const [initialContent, setInitialContent] = useState('');
+  const [initialDate, setInitialDate] = useState('');
+  const [initialTags, setInitialTags] = useState<Tag[]>([]);
 
   useEffect(() => {
     if (isEditing && diaryId) {
       loadDiary(diaryId);
     }
   }, [diaryId]);
+
+  // Track unsaved changes
+  useEffect(() => {
+    if (isEditing) {
+      const hasChanges =
+        title !== initialTitle ||
+        content !== initialContent ||
+        date !== initialDate ||
+        JSON.stringify(media) !== JSON.stringify(originalMedia) ||
+        JSON.stringify(tags) !== JSON.stringify(initialTags);
+      setHasUnsavedChanges(hasChanges);
+    } else {
+      // For new diary, check if there's any content
+      const hasContent = !!(title.trim() || content.trim() || media.length > 0);
+      setHasUnsavedChanges(hasContent);
+    }
+  }, [title, content, date, media, tags, originalMedia, initialTitle, initialContent, initialDate, initialTags, isEditing]);
+
+  // Listen for navigation events to detect back gesture/button
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      // Don't show dialog if we're currently saving
+      if (isSaving || !hasUnsavedChanges) {
+        return;
+      }
+
+      // Prevent default navigation
+      e.preventDefault();
+
+      // Store the pending navigation action
+      setPendingNavigation(() => () => {
+        navigation.dispatch(e.data.action);
+      });
+
+      // Show unsaved changes dialog
+      setUnsavedDialogVisible(true);
+    });
+
+    return unsubscribe;
+  }, [navigation, hasUnsavedChanges, isSaving]);
 
   const loadDiary = async (id: string) => {
     try {
@@ -58,23 +119,59 @@ export const EditorScreen: React.FC = () => {
         setMedia(orderedMedia);
         setOriginalMedia(orderedMedia);
         setTags(diary.tags);
+        // Set initial values for change detection
+        setInitialTitle(diary.title);
+        setInitialContent(diary.content);
+        setInitialDate(formatDateInputValue(diary.createdAt));
+        setInitialTags(diary.tags);
       } else {
-        Alert.alert('提示', '这篇日记不存在或已被删除');
+        setNotFoundDialogVisible(true);
         navigation.goBack();
       }
     } catch (error) {
       console.error('Failed to load diary:', error);
-      Alert.alert('错误', '无法加载日记');
+      setLoadErrorDialogVisible(true);
+    }
+  };
+
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      setLibraryPermissionDialogVisible(true);
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        allowsMultipleSelection: true,
+        orderedSelection: true,
+        quality: 1,
+      });
+
+      if (!result.canceled) {
+        const newMedia: MediaItem[] = result.assets.map((asset) => ({
+          id: generateId(),
+          type: asset.type === 'video' ? 'video' : 'image',
+          uri: asset.uri,
+          fileName: asset.fileName,
+          mimeType: asset.mimeType,
+        }));
+        setMedia(assignMediaPositions([...media, ...newMedia]));
+      }
+    } catch (error) {
+      console.error('Failed to pick image:', error);
     }
   };
 
   const handleSave = async () => {
     if (!title.trim() && !content.trim() && media.length === 0) {
-      Alert.alert('提示', '请填写日记内容');
+      setEmptyContentDialogVisible(true);
       return;
     }
 
     setLoading(true);
+    setIsSaving(true);
     try {
       const parsedCreatedAt = parseDateInputValue(
         date,
@@ -82,22 +179,29 @@ export const EditorScreen: React.FC = () => {
       );
 
       if (parsedCreatedAt === null) {
-        Alert.alert('提示', '请输入有效日期，格式为 YYYY-MM-DD');
+        setInvalidDateDialogVisible(true);
         setLoading(false);
+        setIsSaving(false);
         return;
       }
 
       const savedMedia: MediaItem[] = [];
       for (const item of assignMediaPositions(media)) {
-        if (item.uri.startsWith('file://') || item.uri.startsWith('/')) {
-          const isOriginal = originalMedia.some((m) => m.id === item.id);
-          if (isOriginal) {
-            savedMedia.push(item);
-          } else {
-            const fileName = `${generateId()}.${getMediaFileExtension(item)}`;
-            const savedUri = await saveMedia(item.uri, fileName);
-            savedMedia.push({ ...item, uri: savedUri });
-          }
+        // Check if media is already in our storage directory
+        const isInOurStorage = item.uri.startsWith(MEDIA_DIR_PATH);
+        const isOriginal = originalMedia.some((m) => m.id === item.id);
+
+        if (isInOurStorage) {
+          // Already in our storage - keep as is
+          savedMedia.push(item);
+        } else if (isOriginal) {
+          // Original media that was removed from this edit session
+          savedMedia.push(item);
+        } else {
+          // New media - need to save to our storage
+          const fileName = `${generateId()}.${getMediaFileExtension(item)}`;
+          const savedUri = await saveMedia(item.uri, fileName);
+          savedMedia.push({ ...item, uri: savedUri });
         }
       }
 
@@ -122,12 +226,25 @@ export const EditorScreen: React.FC = () => {
         await createDiary(entry);
       }
 
+      // Reset change tracking after successful save
+      setHasUnsavedChanges(false);
+      setIsSaving(false);
+      if (isEditing) {
+        setInitialTitle(title.trim());
+        setInitialContent(content.trim());
+        setInitialDate(date);
+        setInitialTags(tags);
+        setOriginalMedia(savedMedia);
+        setInitialCreatedAt(parsedCreatedAt);
+      }
+
       navigation.goBack();
     } catch (error) {
       console.error('Failed to save diary:', error);
-      Alert.alert('错误', '保存失败');
+      setSaveErrorDialogVisible(true);
     } finally {
       setLoading(false);
+      setIsSaving(false);
     }
   };
 
@@ -180,6 +297,7 @@ export const EditorScreen: React.FC = () => {
             importantForAutofill="no"
           />
           <Text style={styles.weekDay}>{getWeekDayLabel(date)}</Text>
+          <Text style={styles.charCount}>{content.length} 字</Text>
         </View>
 
         <View style={styles.cardContainer}>
@@ -213,12 +331,13 @@ export const EditorScreen: React.FC = () => {
         </View>
 
         <View style={styles.mediaSection}>
-          <Text style={styles.mediaLabel}>添加媒体</Text>
+          <TouchableOpacity onPress={pickImage} activeOpacity={0.7}>
+            <Text style={styles.mediaLabel}>添加媒体</Text>
+          </TouchableOpacity>
           <MediaPicker media={media} onMediaChange={setMedia} />
         </View>
 
         <TagEditor
-          diaryId={diaryId}
           selectedTags={tags}
           onTagsChange={setTags}
         />
@@ -227,6 +346,93 @@ export const EditorScreen: React.FC = () => {
         </ScrollView>
       </View>
       </KeyboardAvoidingView>
+
+      {/* Not found dialog */}
+      <StyledDialog
+        visible={notFoundDialogVisible}
+        title="提示"
+        message="这篇日记不存在或已被删除"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setNotFoundDialogVisible(false) }]}
+        onDismiss={() => setNotFoundDialogVisible(false)}
+      />
+
+      {/* Load error dialog */}
+      <StyledDialog
+        visible={loadErrorDialogVisible}
+        title="错误"
+        message="无法加载日记"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setLoadErrorDialogVisible(false) }]}
+        onDismiss={() => setLoadErrorDialogVisible(false)}
+      />
+
+      {/* Empty content dialog */}
+      <StyledDialog
+        visible={emptyContentDialogVisible}
+        title="提示"
+        message="请填写日记内容"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setEmptyContentDialogVisible(false) }]}
+        onDismiss={() => setEmptyContentDialogVisible(false)}
+      />
+
+      {/* Invalid date dialog */}
+      <StyledDialog
+        visible={invalidDateDialogVisible}
+        title="提示"
+        message="请输入有效日期，格式为 YYYY-MM-DD"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setInvalidDateDialogVisible(false) }]}
+        onDismiss={() => setInvalidDateDialogVisible(false)}
+      />
+
+      {/* Save error dialog */}
+      <StyledDialog
+        visible={saveErrorDialogVisible}
+        title="错误"
+        message="保存失败"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setSaveErrorDialogVisible(false) }]}
+        onDismiss={() => setSaveErrorDialogVisible(false)}
+      />
+
+      {/* Library permission dialog */}
+      <StyledDialog
+        visible={libraryPermissionDialogVisible}
+        title="权限不足"
+        message="需要访问相册权限才能选择图片"
+        buttons={[{ text: '确定', style: 'default', onPress: () => setLibraryPermissionDialogVisible(false) }]}
+        onDismiss={() => setLibraryPermissionDialogVisible(false)}
+      />
+
+      {/* Unsaved changes dialog */}
+      <StyledDialog
+        visible={unsavedDialogVisible}
+        title="有未保存的更改"
+        message="确定要退出吗？退出后将丢失未保存的内容。"
+        buttons={[
+          { text: '取消', style: 'cancel', onPress: () => {
+            setUnsavedDialogVisible(false);
+            setPendingNavigation(null);
+          }},
+          { text: '不保存', style: 'destructive', onPress: () => {
+            setUnsavedDialogVisible(false);
+            if (pendingNavigation) {
+              pendingNavigation();
+              setPendingNavigation(null);
+            }
+          }},
+          { text: '保存', style: 'default', onPress: async () => {
+            setUnsavedDialogVisible(false);
+            // Save first, then navigate
+            await handleSave();
+            if (pendingNavigation) {
+              pendingNavigation();
+              setPendingNavigation(null);
+            }
+          }},
+        ]}
+        onDismiss={() => {
+          setUnsavedDialogVisible(false);
+          setPendingNavigation(null);
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -314,6 +520,12 @@ const styles = StyleSheet.create({
   weekDay: {
     fontSize: 14,
     color: '#827066',
+    marginLeft: 12,
+  },
+  charCount: {
+    fontSize: 12,
+    color: '#a48a74',
+    marginLeft: 'auto',
   },
   cardContainer: {
     backgroundColor: '#fdfcfb',
@@ -354,7 +566,7 @@ const styles = StyleSheet.create({
     minHeight: 220,
     borderWidth: 0,
     backgroundColor: 'transparent',
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
   },
   mediaSection: {
     paddingHorizontal: 16,
@@ -363,8 +575,16 @@ const styles = StyleSheet.create({
   mediaLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#827066',
+    color: '#c47030',
     marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: '#ebe7e3',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2ddd8',
+    overflow: 'hidden',
+    textAlign: 'center',
   },
   bottomPadding: {
     height: 40,

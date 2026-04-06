@@ -32,12 +32,17 @@ export interface DiaryTag {
   tagId: string;
 }
 
-export type TimeFilter = 'week' | 'month' | 'sameDayLastYear' | 'all';
+export type TimeFilter = 'week' | 'month' | 'all';
 
 export interface WordFrequency {
   word: string;
   count: number;
   level: 1 | 2 | 3;
+}
+
+export interface MonthFilter {
+  year: number;
+  month: number; // 1-12
 }
 
 export type RootStackParamList = {

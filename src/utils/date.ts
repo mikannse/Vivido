@@ -7,6 +7,32 @@ export const formatDateInputValue = (timestamp: number): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 };
 
+export const formatLocalDateKey = (value: Date | number): string => {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+export const getDateRangeForKey = (
+  value: string
+): { start: number; end: number } | null => {
+  const parsed = parseDateInputValue(value);
+  if (parsed === null) {
+    return null;
+  }
+
+  const startDate = new Date(parsed);
+  startDate.setHours(0, 0, 0, 0);
+
+  const endDate = new Date(startDate);
+  endDate.setDate(endDate.getDate() + 1);
+  endDate.setMilliseconds(-1);
+
+  return {
+    start: startDate.getTime(),
+    end: endDate.getTime(),
+  };
+};
+
 export const parseDateInputValue = (
   value: string,
   referenceTimestamp: number = Date.now()

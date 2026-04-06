@@ -1,37 +1,84 @@
-import React, { useState, useCallback } from 'react';
-import { View, FlatList, StyleSheet, TouchableOpacity, Text, RefreshControl } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import React, { useState, useCallback, useRef } from 'react';
+import { View, FlatList, StyleSheet, TouchableOpacity, Text, RefreshControl, ActivityIndicator } from 'react-native';
+import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RootStackParamList, DiaryEntry } from '../types';
-import { getAllDiaries } from '../services/database';
+import { getDiariesPaginated } from '../services/database';
 import { TimelineCard } from '../components/TimelineCard';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
+// Pagination settings
+const PAGE_SIZE = 20;
+const CACHE_TTL_MS = 1000;
+
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
+  const isFocused = useIsFocused();
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
-  const loadDiaries = useCallback(async () => {
+  // Cache refs to avoid redundant loads
+  const lastLoadTimeRef = useRef<number>(0);
+  const isLoadingRef = useRef(false);
+  const currentPageRef = useRef(0);
+
+  const loadDiariesPage = useCallback(async (page: number, force = false) => {
+    if (isLoadingRef.current && !force && page > 0) return;
+
+    const now = Date.now();
+
+    // For initial load, use cache if valid
+    if (page === 0 && !force && diaries.length > 0 && (now - lastLoadTimeRef.current) < CACHE_TTL_MS) {
+      return;
+    }
+
+    isLoadingRef.current = true;
     try {
-      const data = await getAllDiaries();
-      setDiaries(data);
+      const { diaries: newDiaries } = await getDiariesPaginated(PAGE_SIZE, page * PAGE_SIZE);
+
+      if (page === 0) {
+        setDiaries(newDiaries);
+      } else {
+        setDiaries(prev => [...prev, ...newDiaries]);
+      }
+
+      setHasMore(newDiaries.length === PAGE_SIZE);
+      currentPageRef.current = page;
+      lastLoadTimeRef.current = Date.now();
     } catch (error) {
       console.error('Failed to load diaries:', error);
+    } finally {
+      isLoadingRef.current = false;
     }
-  }, []);
+  }, [diaries.length]);
 
+  // Initial load
   useFocusEffect(
     useCallback(() => {
-      loadDiaries();
-    }, [loadDiaries])
+      if (isFocused) {
+        currentPageRef.current = 0;
+        loadDiariesPage(0, true);
+      }
+    }, [isFocused, loadDiariesPage])
   );
+
+  // Load more when scrolling to bottom
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+
+    setLoadingMore(true);
+    await loadDiariesPage(currentPageRef.current + 1);
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, loadDiariesPage]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadDiaries();
+    currentPageRef.current = 0;
+    await loadDiariesPage(0, true);
     setRefreshing(false);
   };
 
@@ -49,6 +96,16 @@ export const HomeScreen: React.FC = () => {
     </View>
   );
 
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+    return (
+      <View style={styles.footer}>
+        <ActivityIndicator size="small" color="#c47030" />
+        <Text style={styles.footerText}>加载更多...</Text>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -58,7 +115,7 @@ export const HomeScreen: React.FC = () => {
             style={styles.headerButton}
             onPress={() => navigation.navigate('Discovery')}
           >
-            <Text style={styles.headerIcon}>🔍</Text>
+            <Text style={styles.headerIcon}>◎</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerButton}
@@ -75,6 +132,7 @@ export const HomeScreen: React.FC = () => {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         ListEmptyComponent={renderEmpty}
+        ListFooterComponent={renderFooter}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -82,6 +140,8 @@ export const HomeScreen: React.FC = () => {
             tintColor="#827066"
           />
         }
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
         showsVerticalScrollIndicator={false}
       />
 
@@ -131,7 +191,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerIcon: {
-    fontSize: 18,
+    fontSize: 20,
+    color: '#827066',
   },
   settingsButton: {
     width: 40,
@@ -148,6 +209,17 @@ const styles = StyleSheet.create({
   list: {
     paddingVertical: 8,
     flexGrow: 1,
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    gap: 8,
+  },
+  footerText: {
+    fontSize: 13,
+    color: '#a89080',
   },
   emptyContainer: {
     flex: 1,

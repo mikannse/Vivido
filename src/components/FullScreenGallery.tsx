@@ -167,7 +167,14 @@ export const FullScreenGallery: React.FC<FullScreenGalleryProps> = ({
             })}
             showsHorizontalScrollIndicator={false}
             onMomentumScrollEnd={handleMomentumScrollEnd}
-            onScrollToIndexFailed={() => {}}
+            onScrollToIndexFailed={(info) => {
+              console.warn('Scroll to index failed:', info);
+              // Fallback: scroll to position manually
+              flatListRef.current?.scrollToOffset({
+                offset: info.index * width,
+                animated: true,
+              });
+            }}
             style={styles.mediaContainer}
           />
 
@@ -245,7 +252,7 @@ const styles = StyleSheet.create({
     marginLeft: 16,
     fontSize: 14,
     color: 'rgba(255,255,255,0.7)',
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
   },
   pageIndicator: {
     flexDirection: 'row',

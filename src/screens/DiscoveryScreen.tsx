@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,12 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types';
+import { RootStackParamList, MonthFilter } from '../types';
 import { useDiscovery } from '../hooks/useDiscovery';
 import { FilterChips } from '../components/FilterChips';
 import { TagChip } from '../components/TagChip';
@@ -25,12 +26,14 @@ const TIME_FILTER_LABELS = {
   all: '全部时间',
   week: '最近 7 天',
   month: '最近 1 个月',
-  sameDayLastYear: '那年今日',
 } as const;
+
+const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
 export const DiscoveryScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const [showSearch, setShowSearch] = useState(false);
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
   const {
     diaries,
     tags,
@@ -42,13 +45,25 @@ export const DiscoveryScreen: React.FC = () => {
     selectedTags,
     timeFilter,
     selectedDate,
+    monthFilter,
     setSearchQuery,
     setTimeFilter,
     toggleTag,
     selectDate,
+    setMonthFilter,
     clearFilters,
     refresh,
   } = useDiscovery();
+
+  const [tempYear, setTempYear] = useState(new Date().getFullYear());
+  const [tempMonth, setTempMonth] = useState(new Date().getMonth() + 1);
+
+  // Refresh data when screen comes into focus (e.g., after deleting a tag in Editor)
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh])
+  );
 
   const handleBack = () => {
     navigation.goBack();
@@ -63,12 +78,32 @@ export const DiscoveryScreen: React.FC = () => {
     selectDate(date);
   };
 
+  const handleMonthFilterPress = () => {
+    if (monthFilter) {
+      setMonthFilter(null);
+    } else {
+      setTempYear(new Date().getFullYear());
+      setTempMonth(new Date().getMonth() + 1);
+      setShowMonthPicker(true);
+    }
+  };
+
+  const confirmMonthFilter = () => {
+    setMonthFilter({ year: tempYear, month: tempMonth });
+    setShowMonthPicker(false);
+  };
+
   const hasActiveFilters =
     Boolean(searchQuery.trim()) ||
     selectedTags.length > 0 ||
     timeFilter !== 'all' ||
-    Boolean(selectedDate);
+    Boolean(selectedDate) ||
+    Boolean(monthFilter);
   const wordCloudTitle = hasActiveFilters ? '筛选结果关键词' : '近 30 天关键词';
+
+  const formatMonthFilter = (filter: MonthFilter) => {
+    return `${filter.year}年${filter.month}月`;
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -78,7 +113,7 @@ export const DiscoveryScreen: React.FC = () => {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>回顾岛</Text>
         <TouchableOpacity onPress={() => setShowSearch(!showSearch)}>
-          <Text style={styles.searchIcon}>🔍</Text>
+          <Text style={styles.searchIcon}>搜索</Text>
         </TouchableOpacity>
       </View>
 
@@ -105,20 +140,72 @@ export const DiscoveryScreen: React.FC = () => {
       >
         <FilterChips selected={timeFilter} onSelect={setTimeFilter} />
 
+        <View style={styles.monthPickerRow}>
+          <TouchableOpacity
+            style={[styles.monthPickerButton, monthFilter && styles.monthPickerButtonActive]}
+            onPress={handleMonthFilterPress}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.monthPickerText, monthFilter && styles.monthPickerTextActive]}>
+              {monthFilter ? formatMonthFilter(monthFilter) : '选择月份'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {hasActiveFilters && (
           <View style={styles.activeFilters}>
             <View style={styles.filterSummary}>
               {selectedDate ? (
-                <Text style={styles.filterPill}>日期: {selectedDate}</Text>
+                <TouchableOpacity
+                  style={styles.filterPill}
+                  onPress={() => selectDate(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.filterPillText}>日期: {selectedDate}</Text>
+                  <Text style={styles.filterPillClose}>×</Text>
+                </TouchableOpacity>
+              ) : null}
+              {monthFilter ? (
+                <TouchableOpacity
+                  style={styles.filterPill}
+                  onPress={handleMonthFilterPress}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.filterPillText}>月份: {formatMonthFilter(monthFilter)}</Text>
+                  <Text style={styles.filterPillClose}>×</Text>
+                </TouchableOpacity>
               ) : null}
               {timeFilter !== 'all' ? (
-                <Text style={styles.filterPill}>时间: {TIME_FILTER_LABELS[timeFilter]}</Text>
+                <TouchableOpacity
+                  style={styles.filterPill}
+                  onPress={() => setTimeFilter('all')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.filterPillText}>时间: {TIME_FILTER_LABELS[timeFilter]}</Text>
+                  <Text style={styles.filterPillClose}>×</Text>
+                </TouchableOpacity>
               ) : null}
               {searchQuery.trim() ? (
-                <Text style={styles.filterPill}>关键词: {searchQuery.trim()}</Text>
+                <TouchableOpacity
+                  style={styles.filterPill}
+                  onPress={() => setSearchQuery('')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.filterPillText}>关键词: {searchQuery.trim()}</Text>
+                  <Text style={styles.filterPillClose}>×</Text>
+                </TouchableOpacity>
               ) : null}
               {selectedTags.length > 0 ? (
-                <Text style={styles.filterPill}>标签: 任一命中 {selectedTags.length} 个</Text>
+                <TouchableOpacity
+                  style={styles.filterPill}
+                  onPress={() => clearFilters()}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.filterPillText}>
+                    标签: {selectedTags.map(tagId => tags.find(t => t.id === tagId)?.name).join(', ')}
+                  </Text>
+                  <Text style={styles.filterPillClose}>×</Text>
+                </TouchableOpacity>
               ) : null}
             </View>
             <TouchableOpacity onPress={clearFilters} activeOpacity={0.7}>
@@ -211,6 +298,65 @@ export const DiscoveryScreen: React.FC = () => {
 
         <View style={styles.bottomPadding} />
       </ScrollView>
+
+      <Modal
+        visible={showMonthPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMonthPicker(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowMonthPicker(false)}
+        >
+          <View style={styles.monthPickerModal}>
+            <Text style={styles.monthPickerTitle}>选择月份</Text>
+            <View style={styles.yearRow}>
+              <TouchableOpacity
+                onPress={() => setTempYear(tempYear - 1)}
+                style={styles.yearButton}
+              >
+                <Text style={styles.yearButtonText}>◀</Text>
+              </TouchableOpacity>
+              <Text style={styles.yearText}>{tempYear}年</Text>
+              <TouchableOpacity
+                onPress={() => setTempYear(tempYear + 1)}
+                style={styles.yearButton}
+              >
+                <Text style={styles.yearButtonText}>▶</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.monthGrid}>
+              {MONTHS.map((month, index) => (
+                <TouchableOpacity
+                  key={month}
+                  style={[
+                    styles.monthButton,
+                    tempMonth === index + 1 && styles.monthButtonActive,
+                  ]}
+                  onPress={() => setTempMonth(index + 1)}
+                >
+                  <Text
+                    style={[
+                      styles.monthButtonText,
+                      tempMonth === index + 1 && styles.monthButtonTextActive,
+                    ]}
+                  >
+                    {month}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity
+              style={styles.confirmButton}
+              onPress={confirmMonthFilter}
+            >
+              <Text style={styles.confirmButtonText}>确定</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -240,7 +386,9 @@ const styles = StyleSheet.create({
     color: '#3d2c1e',
   },
   searchIcon: {
-    fontSize: 20,
+    fontSize: 16,
+    color: '#827066',
+    fontWeight: '500',
   },
   searchContainer: {
     paddingHorizontal: 16,
@@ -278,6 +426,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  filterPillText: {
+    fontSize: 12,
+    color: '#6e5747',
+  },
+  filterPillClose: {
+    fontSize: 14,
+    color: '#a89080',
+    fontWeight: '600',
   },
   clearFiltersText: {
     fontSize: 13,
@@ -374,5 +534,106 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 40,
+  },
+  monthPickerRow: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  monthPickerButton: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2ddd8',
+    backgroundColor: '#fdfcfb',
+  },
+  monthPickerButtonActive: {
+    backgroundColor: '#c47030',
+    borderColor: '#c47030',
+  },
+  monthPickerText: {
+    fontSize: 14,
+    color: '#3d2c1e',
+  },
+  monthPickerTextActive: {
+    color: '#fff',
+    fontWeight: '500',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  monthPickerModal: {
+    backgroundColor: '#fdfcfb',
+    borderRadius: 16,
+    padding: 24,
+    width: 300,
+    alignItems: 'center',
+  },
+  monthPickerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#3d2c1e',
+    marginBottom: 20,
+  },
+  yearRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  yearButton: {
+    padding: 8,
+  },
+  yearButtonText: {
+    fontSize: 16,
+    color: '#c47030',
+  },
+  yearText: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#3d2c1e',
+    marginHorizontal: 20,
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  monthButton: {
+    width: 60,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2ddd8',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  monthButtonActive: {
+    backgroundColor: '#c47030',
+    borderColor: '#c47030',
+  },
+  monthButtonText: {
+    fontSize: 14,
+    color: '#3d2c1e',
+  },
+  monthButtonTextActive: {
+    color: '#fff',
+    fontWeight: '500',
+  },
+  confirmButton: {
+    marginTop: 20,
+    backgroundColor: '#c47030',
+    borderRadius: 8,
+    paddingHorizontal: 40,
+    paddingVertical: 12,
+  },
+  confirmButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

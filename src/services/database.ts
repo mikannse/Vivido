@@ -1,5 +1,7 @@
 import * as SQLite from 'expo-sqlite';
-import { DiaryEntry, MediaItem, Tag, TimeFilter } from '../types';
+import { DiaryEntry, MediaItem, Tag, TimeFilter, MonthFilter } from '../types';
+import { getDateRangeForKey } from '../utils/date';
+import { generateId } from '../utils/uuid';
 
 const DB_NAME = 'diary.db';
 
@@ -60,6 +62,8 @@ export const initDatabase = async (): Promise<void> => {
       position INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (diaryId) REFERENCES diaries(id) ON DELETE CASCADE
     );
+    CREATE INDEX IF NOT EXISTS idx_diaries_createdAt ON diaries(createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_media_diaryId ON media(diaryId);
   `);
 
   await ensureMediaColumns();
@@ -189,6 +193,70 @@ export const getAllDiaries = async (): Promise<DiaryEntry[]> => {
   }));
 };
 
+// Paginated diary loading for better performance
+// Uses LIMIT 3 media per diary since TimelineCard only displays up to 3 images
+export const getDiariesPaginated = async (
+  limit: number,
+  offset: number,
+  mediaLimitPerDiary: number = 3
+): Promise<{ diaries: DiaryEntry[]; total: number }> => {
+  if (!db) throw new Error('Database not initialized');
+
+  // Get total count for pagination indicator
+  const countResult = await db.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM diaries'
+  );
+  const total = countResult?.count ?? 0;
+
+  // Get paginated diaries
+  const diaries = await db.getAllAsync<DiaryRow>(
+    'SELECT * FROM diaries ORDER BY createdAt DESC LIMIT ? OFFSET ?',
+    [limit, offset]
+  );
+
+  if (diaries.length === 0) {
+    return { diaries: [], total };
+  }
+
+  const diaryIds = diaries.map((d) => d.id);
+  const tagsMap = await getTagsForDiaries(diaryIds);
+
+  // Only fetch limited media for the diaries we got (not all media)
+  // Using row_number to limit media per diary to what's needed for display
+  const mediaPlaceholders = diaryIds.map(() => '?').join(',');
+  const mediaRows = await db.getAllAsync<MediaRow & { diaryId: string; rowNum: number }>(
+    `SELECT m.*, ROW_NUMBER() OVER (PARTITION BY m.diaryId ORDER BY m.position ASC, m.rowid ASC) as rowNum
+     FROM media m
+     WHERE m.diaryId IN (${mediaPlaceholders})`,
+    diaryIds
+  );
+
+  const mediaByDiaryId = new Map<string, MediaItem[]>();
+  for (const media of mediaRows) {
+    // Only keep up to mediaLimitPerDiary per diary
+    if (media.rowNum <= mediaLimitPerDiary) {
+      const existing = mediaByDiaryId.get(media.diaryId) ?? [];
+      existing.push({
+        id: media.id,
+        type: media.type,
+        uri: media.uri,
+        thumbnail: media.thumbnail,
+        position: media.position,
+      });
+      mediaByDiaryId.set(media.diaryId, existing);
+    }
+  }
+
+  return {
+    diaries: diaries.map((diary) => ({
+      ...diary,
+      media: mediaByDiaryId.get(diary.id) ?? [],
+      tags: tagsMap.get(diary.id) ?? [],
+    })),
+    total,
+  };
+};
+
 export const getDiaryById = async (id: string): Promise<DiaryEntry | null> => {
   if (!db) throw new Error('Database not initialized');
 
@@ -209,59 +277,115 @@ export const getDiaryById = async (id: string): Promise<DiaryEntry | null> => {
   return { ...diary, media, tags };
 };
 
-// Search and filter diaries
-export const searchDiaries = async (
-  query: string,
-  tagIds: string[],
-  timeFilter: TimeFilter
-): Promise<DiaryEntry[]> => {
+// Get adjacent diary IDs (previous and next) for navigation
+// Optimized: uses LIMIT 1 instead of loading all IDs into memory
+export const getAdjacentDiaryIds = async (
+  diaryId: string
+): Promise<{ prevId: string | null; nextId: string | null }> => {
   if (!db) throw new Error('Database not initialized');
 
-  let sql = 'SELECT * FROM diaries WHERE 1=1';
+  // Get the createdAt of the current diary
+  const current = await db.getFirstAsync<{ createdAt: number }>(
+    'SELECT createdAt FROM diaries WHERE id = ?',
+    [diaryId]
+  );
+
+  if (!current) {
+    return { prevId: null, nextId: null };
+  }
+
+  // prevId: older diary (createdAt > current, i.e., higher timestamp = older in time)
+  // Ordered ASC so we get the closest older entry
+  const prev = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM diaries WHERE createdAt > ? ORDER BY createdAt ASC LIMIT 1',
+    [current.createdAt]
+  );
+
+  // nextId: newer diary (createdAt < current, i.e., lower timestamp = newer in time)
+  // Ordered DESC so we get the closest newer entry
+  const next = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM diaries WHERE createdAt < ? ORDER BY createdAt DESC LIMIT 1',
+    [current.createdAt]
+  );
+
+  return { prevId: prev?.id ?? null, nextId: next?.id ?? null };
+};
+
+const buildDiscoveryWhereClause = (
+  query: string,
+  tagIds: string[],
+  timeFilter: TimeFilter,
+  selectedDate?: string | null,
+  monthFilter?: MonthFilter | null
+): { whereSql: string; params: (string | number)[] } => {
+  let whereSql = ' WHERE 1=1';
   const params: (string | number)[] = [];
 
-  // Text search
   if (query.trim()) {
-    sql += ' AND (title LIKE ? OR content LIKE ?)';
+    whereSql += ' AND (title LIKE ? OR content LIKE ?)';
     const searchTerm = `%${query.trim()}%`;
     params.push(searchTerm, searchTerm);
   }
 
-  // Time filter
-  const now = new Date();
-  if (timeFilter === 'week') {
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    sql += ' AND createdAt >= ?';
-    params.push(weekAgo.getTime());
-  } else if (timeFilter === 'month') {
-    const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-    sql += ' AND createdAt >= ?';
-    params.push(monthAgo.getTime());
-  } else if (timeFilter === 'sameDayLastYear') {
-    const lastYear = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-    const dayStart = new Date(lastYear.getFullYear(), lastYear.getMonth(), lastYear.getDate()).getTime();
-    const dayEnd = dayStart + 24 * 60 * 60 * 1000 - 1;
-    sql += ' AND createdAt >= ? AND createdAt <= ?';
-    params.push(dayStart, dayEnd);
+  if (selectedDate) {
+    const range = getDateRangeForKey(selectedDate);
+    if (range) {
+      whereSql += ' AND createdAt >= ? AND createdAt <= ?';
+      params.push(range.start, range.end);
+    }
+  } else if (monthFilter) {
+    const startOfMonth = new Date(monthFilter.year, monthFilter.month - 1, 1).getTime();
+    const endOfMonth = new Date(monthFilter.year, monthFilter.month, 0, 23, 59, 59, 999).getTime();
+    whereSql += ' AND createdAt >= ? AND createdAt <= ?';
+    params.push(startOfMonth, endOfMonth);
+  } else {
+    const now = new Date();
+    if (timeFilter === 'week') {
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      whereSql += ' AND createdAt >= ?';
+      params.push(weekAgo.getTime());
+    } else if (timeFilter === 'month') {
+      const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+      whereSql += ' AND createdAt >= ?';
+      params.push(monthAgo.getTime());
+    }
   }
 
-  sql += ' ORDER BY createdAt DESC';
-
-  const diaries = await db.getAllAsync<DiaryRow>(sql, params);
-
-  // Filter by tags if needed
-  let filteredDiaries = diaries;
   if (tagIds.length > 0) {
-    const placeholders = tagIds.map(() => '?').join(',');
-    const taggedDiaryIds = await db.getAllAsync<{ diaryId: string }>(
-      `SELECT DISTINCT diaryId FROM diary_tags WHERE tagId IN (${placeholders})`,
-      tagIds
-    );
-    const taggedIds = new Set(taggedDiaryIds.map((r) => r.diaryId));
-    filteredDiaries = diaries.filter((d) => taggedIds.has(d.id));
+    // AND logic: diary must have ALL selected tags
+    whereSql += ` AND (
+      SELECT COUNT(DISTINCT dt.tagId) FROM diary_tags dt
+      WHERE dt.diaryId = diaries.id AND dt.tagId IN (${tagIds.map(() => '?').join(',')})
+    ) = ?`;
+    params.push(...tagIds, tagIds.length);
   }
 
-  const diaryIds = filteredDiaries.map((d) => d.id);
+  return { whereSql, params };
+};
+
+// Search and filter diaries
+export const searchDiaries = async (
+  query: string,
+  tagIds: string[],
+  timeFilter: TimeFilter,
+  selectedDate?: string | null,
+  monthFilter?: MonthFilter | null
+): Promise<DiaryEntry[]> => {
+  if (!db) throw new Error('Database not initialized');
+
+  const { whereSql, params } = buildDiscoveryWhereClause(
+    query,
+    tagIds,
+    timeFilter,
+    selectedDate,
+    monthFilter
+  );
+  const diaries = await db.getAllAsync<DiaryRow>(
+    `SELECT * FROM diaries${whereSql} ORDER BY createdAt DESC`,
+    params
+  );
+
+  const diaryIds = diaries.map((d) => d.id);
   const mediaRows = diaryIds.length > 0
     ? await db.getAllAsync<MediaRow>(
         `SELECT * FROM media WHERE diaryId IN (${diaryIds.map(() => '?').join(',')}) ORDER BY diaryId ASC, position ASC`,
@@ -284,7 +408,7 @@ export const searchDiaries = async (
     mediaByDiaryId.set(media.diaryId, existing);
   }
 
-  return filteredDiaries.map((diary) => ({
+  return diaries.map((diary) => ({
     ...diary,
     media: mediaByDiaryId.get(diary.id) ?? [],
     tags: tagsMap.get(diary.id) ?? [],
@@ -292,17 +416,31 @@ export const searchDiaries = async (
 };
 
 // Get heatmap data (count entries per day)
-export const getHeatmapData = async (days: number = 365): Promise<Map<string, number>> => {
+export const getHeatmapData = async (
+  days: number = 365,
+  query: string = '',
+  tagIds: string[] = [],
+  timeFilter: TimeFilter = 'all',
+  selectedDate?: string | null,
+  monthFilter?: MonthFilter | null
+): Promise<Map<string, number>> => {
   if (!db) throw new Error('Database not initialized');
 
   const startDate = Date.now() - days * 24 * 60 * 60 * 1000;
+  const { whereSql, params } = buildDiscoveryWhereClause(
+    query,
+    tagIds,
+    timeFilter,
+    selectedDate,
+    monthFilter
+  );
 
   const rows = await db.getAllAsync<{ date: string; count: number }>(
-    `SELECT date(createdAt/1000, 'unixepoch') as date, COUNT(*) as count
+    `SELECT date(createdAt/1000, 'unixepoch', 'localtime') as date, COUNT(*) as count
      FROM diaries
-     WHERE createdAt >= ?
+     ${whereSql} AND createdAt >= ?
      GROUP BY date`,
-    [startDate]
+    [...params, startDate]
   );
 
   const map = new Map<string, number>();
@@ -313,16 +451,31 @@ export const getHeatmapData = async (days: number = 365): Promise<Map<string, nu
 };
 
 // Get word frequency from diary content
-export const getWordFrequency = async (months: number = 1): Promise<Map<string, number>> => {
+export const getWordFrequency = async (
+  months: number = 1,
+  query: string = '',
+  tagIds: string[] = [],
+  timeFilter: TimeFilter = 'all',
+  selectedDate?: string | null,
+  monthFilter?: MonthFilter | null
+): Promise<Map<string, number>> => {
   if (!db) throw new Error('Database not initialized');
 
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - months);
   startDate.setHours(0, 0, 0, 0);
+  const { whereSql, params } = buildDiscoveryWhereClause(
+    query,
+    tagIds,
+    timeFilter,
+    selectedDate,
+    monthFilter
+  );
 
+  const shouldApplyRecentWindow = timeFilter === 'all' && !selectedDate && !monthFilter;
   const diaries = await db.getAllAsync<{ content: string }>(
-    'SELECT content FROM diaries WHERE createdAt >= ?',
-    [startDate.getTime()]
+    `SELECT content FROM diaries${whereSql}${shouldApplyRecentWindow ? ' AND createdAt >= ?' : ''}`,
+    shouldApplyRecentWindow ? [...params, startDate.getTime()] : params
   );
 
   // Simple Chinese word extraction (character-based for simplicity)
@@ -435,7 +588,41 @@ export const replaceAllDiaries = async (entries: DiaryEntry[]): Promise<void> =>
   });
 };
 
-// Simple ID generator (for tags without uuid dependency)
-const generateId = (): string => {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+export const replaceAllData = async (entries: DiaryEntry[], tags: Tag[]): Promise<void> => {
+  if (!db) throw new Error('Database not initialized');
+
+  await db.withTransactionAsync(async () => {
+    await db!.runAsync('DELETE FROM diary_tags');
+    await db!.runAsync('DELETE FROM media');
+    await db!.runAsync('DELETE FROM diaries');
+    await db!.runAsync('DELETE FROM tags');
+
+    for (const tag of tags) {
+      await db!.runAsync(
+        'INSERT INTO tags (id, name, color, createdAt) VALUES (?, ?, ?, ?)',
+        [tag.id, tag.name, tag.color, tag.createdAt]
+      );
+    }
+
+    for (const entry of entries) {
+      await db!.runAsync(
+        'INSERT INTO diaries (id, title, content, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
+        [entry.id, entry.title, entry.content, entry.createdAt, entry.updatedAt]
+      );
+
+      for (const media of entry.media) {
+        await db!.runAsync(
+          'INSERT INTO media (id, diaryId, type, uri, thumbnail, position) VALUES (?, ?, ?, ?, ?, ?)',
+          [media.id, entry.id, media.type, media.uri, media.thumbnail || null, media.position ?? 0]
+        );
+      }
+
+      for (const tag of entry.tags) {
+        await db!.runAsync(
+          'INSERT OR IGNORE INTO diary_tags (diaryId, tagId) VALUES (?, ?)',
+          [entry.id, tag.id]
+        );
+      }
+    }
+  });
 };

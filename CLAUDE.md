@@ -13,16 +13,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Database**: expo-sqlite for local SQLite storage
 - **Media**: expo-image-picker, expo-image, expo-video, expo-audio
 - **Storage**: expo-file-system for media file management
-- **Language**: TypeScript with strict mode
+- **Language**: TypeScript with strict mode enabled
 
 ## Common Commands
 
 ```bash
-npm start        # Start Expo development server
-npm run android  # Build and run on Android
-npm run ios      # Build and run on iOS
-npm run web      # Start web build
+# Development
+npm start                    # Start Expo development server
+
+# Android build (local)
+npx expo prebuild --platform android   # Generate native Android project (after app.json changes)
+./gradlew assembleRelease              # Full Android APK (all architectures)
+./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a  # Only arm64 APK
+
+# Android build (cloud - recommended)
+eas build --platform android --profile preview  # Preview build
+
+# iOS build (cloud - recommended, requires Apple Developer account)
+eas build --platform ios --profile production    # Production build
 ```
+
+## Building Android APK
+
+Local builds require Android SDK and can fail due to native compilation issues. For reliable results:
+
+1. **Cloud build (recommended)**: `eas build --platform android --profile preview`
+2. **Local build**: Run `npx expo prebuild --platform android` first, then `./gradlew assembleRelease` in android/
+
+## Building iOS
+
+iOS builds require macOS with Xcode. Cloud build is recommended: `eas build --platform ios --profile production`
 
 ## Fonts Configuration
 
@@ -87,5 +107,3 @@ On Android, TextInput components have internal scrolling. To prevent unwanted sc
 - Use `numberOfLines={1}` for explicit single line
 - Consider using fixed `height` instead of `minHeight`
 
-## Current Date
-2026-04-05

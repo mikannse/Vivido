@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#827066',
     lineHeight: 20,
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
   },
   thumbnail: {
     width: 72,

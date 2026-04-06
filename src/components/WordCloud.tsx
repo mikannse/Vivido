@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   word: {
-    fontFamily: 'LXGWWenKai',
+    fontFamily: 'LXGWWenKaiLite',
     marginHorizontal: 4,
   },
 });
