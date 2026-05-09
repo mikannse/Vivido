@@ -19,12 +19,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-npm start                    # Start Expo development server
+npm start                    # Start Expo development server (default)
+npm run start:lan            # Force LAN mode (use when auto-detection picks wrong IP)
+npm run start:tunnel         # Public URL via ngrok (works across any network)
+
+# TypeScript check
+npx tsc --noEmit             # Check for type errors without emitting
 
 # Android build (local)
 npx expo prebuild --platform android   # Generate native Android project (after app.json changes)
-./gradlew assembleRelease              # Full Android APK (all architectures)
-./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a  # Only arm64 APK
+cd android && ./gradlew assembleRelease              # Full Android APK (all architectures)
+cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a  # Only arm64 APK
 
 # Android build (cloud - recommended)
 eas build --platform android --profile preview  # Preview build
@@ -48,7 +53,7 @@ iOS builds require macOS with Xcode. Cloud build is recommended: `eas build --pl
 
 Custom fonts are loaded in `App.tsx` via expo-font:
 - **PlayfairDisplay** - App title (Vivido on home screen)
-- **LXGWWenKai** - Diary content/body text
+- **LXGWWenKaiLite** - Diary content/body text
 - **SmileySans** - Diary titles
 
 ## Architecture
@@ -71,12 +76,15 @@ Custom fonts are loaded in `App.tsx` via expo-font:
 - **media**: id, diaryId (FK), type ('image'|'video'), uri, thumbnail, position
 - **tags**: id, name, color, createdAt
 - **diary_tags**: diaryId (FK), tagId (FK) - many-to-many relationship
+- **schema_version**: version, description, appliedAt - tracks DB migrations
+- `SCHEMA_VERSION = 2` in `database.ts`; `ensureSchemaVersion()` runs on init
 - Media entries are cascade-deleted when parent diary is deleted
+- `cleanupUnusedTags()` removes tags with no diary references
 
 ### Theme System
 Typography and colors are centralized in `src/theme/index.ts`:
 - `typography.title` - SmileySans for diary titles
-- `typography.body` - LXGWWenKai for diary content
+- `typography.body` - LXGWWenKaiLite for diary content
 - `typography.appName` - PlayfairDisplay for app name
 - `colors` - Warm vintage palette (cream background, brown text, orange primary)
 
@@ -84,7 +92,22 @@ Typography and colors are centralized in `src/theme/index.ts`:
 1. User picks image/video via `expo-image-picker`
 2. File is copied to `FileSystem.documentDirectory + 'media/'` using `storage.saveMedia()`
 3. URI stored in SQLite; thumbnail generated for videos
-4. On diary deletion, `storage.deleteDiaryMedia()` removes all associated files
+4. `media.position` controls display order; `getOrderedMedia()` sorts by position with index fallback
+5. On diary deletion, `storage.deleteDiaryMedia()` removes all associated files
+6. **Note**: `storage.ts` and `backup.ts` import from `expo-file-system/legacy` (not the modern API)
+
+### Backup Format
+Backup export produces a ZIP file containing:
+- `backup-manifest.json` (version 2, schemaVersion 2) - diary metadata + tag list + media file paths
+- `media/` folder - base64-encoded image/video files
+- Import validates schema version and app version before restoring
+- `replaceAllData()` performs atomic DB replacement; imported files are cleaned up on error
+
+### Discovery Screen Architecture
+- Data logic is entirely in `src/hooks/useDiscovery.ts`
+- Combines search query (debounced), tag filters, time filters, date/month filters
+- Fetches diaries, tags, heatmap data, and word frequency in parallel
+- WordCloud levels (1-3) are computed from relative frequency ratios
 
 ### Key Files
 - [src/types/index.ts](src/types/index.ts) - `DiaryEntry`, `MediaItem` interfaces and `RootStackParamList`
@@ -98,9 +121,19 @@ Typography and colors are centralized in `src/theme/index.ts`:
 The `Editor` screen accepts an optional `diaryId` parameter:
 - `undefined` → Create new diary
 - `string` → Edit existing diary (pre-populates form)
+- Supports media multi-select with position-based ordering via `MediaPicker`
+- Tags are edited inline through `TagEditor`; existing tags are fetched from DB and new ones are created on save
 
-### Android TextInput Behavior
+### Development Notes
 
+**Expo LAN Connection on Phone Hotspot**
+When the PC connects to a phone hotspot, `npm start` may generate a QR code with the wrong LAN IP (from another active network interface). If scanning fails, open Expo Go and manually enter:
+```
+exp://<PC_HOTSPOT_IP>:8081
+```
+Use `npm run start:lan` to force LAN mode, or `npm run start:tunnel` for a public URL that works across any network.
+
+**Android TextInput Behavior**
 On Android, TextInput components have internal scrolling. To prevent unwanted scrolling:
 - Use `multiline={false}` for single-line inputs
 - Use `scrollEnabled={false}` to disable internal scrolling

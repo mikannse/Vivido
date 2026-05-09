@@ -35,6 +35,12 @@ const VideoPlayer = React.memo(({ uri, shouldPlay }: { uri: string; shouldPlay: 
     }
   }, [player, shouldPlay]);
 
+  useEffect(() => {
+    return () => {
+      player.release();
+    };
+  }, [player]);
+
   return (
     <View style={videoStyles.container}>
       <VideoView

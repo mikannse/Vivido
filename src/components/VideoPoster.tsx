@@ -37,6 +37,12 @@ export const VideoPoster: React.FC<VideoPosterProps> = ({
   }, []);
 
   useEffect(() => {
+    return () => {
+      player.release();
+    };
+  }, [player]);
+
+  useEffect(() => {
     let cancelled = false;
 
     if (!shouldGenerateThumbnail) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,9 +13,10 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import { DatePickerModal } from '../components/DatePickerModal';
 import { RootStackParamList, DiaryEntry, MediaItem, Tag } from '../types';
-import { getDiaryById, createDiary, updateDiary } from '../services/database';
-import { saveMedia, deleteDiaryMedia, MEDIA_DIR_PATH } from '../services/storage';
+import { getDiaryById, createDiary, updateDiary, saveDraft, getDraft, deleteDraft, Draft } from '../services/database';
+import { saveMedia, deleteMedia, deleteDiaryMedia, MEDIA_DIR_PATH } from '../services/storage';
 import { generateId } from '../utils/uuid';
 import { MediaPicker } from '../components/MediaPicker';
 import { TagEditor } from '../components/TagEditor';
@@ -25,6 +26,14 @@ import { formatDateInputValue, getWeekDayLabel, parseDateInputValue } from '../u
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Editor'>;
 type EditorRouteProp = RouteProp<RootStackParamList, 'Editor'>;
+
+const PAPER_BG = '#f5f0e6';
+const TEXT_PRIMARY = '#3d2c1e';
+const TEXT_SECONDARY = '#7a6250';
+const TEXT_MUTED = '#a48a74';
+const BRAND_GOLD = '#c47030';
+
+const getDraftId = (diaryId?: string): string => diaryId || 'new';
 
 export const EditorScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
@@ -50,10 +59,15 @@ export const EditorScreen: React.FC = () => {
   const [saveErrorDialogVisible, setSaveErrorDialogVisible] = useState(false);
   const [libraryPermissionDialogVisible, setLibraryPermissionDialogVisible] = useState(false);
   const [unsavedDialogVisible, setUnsavedDialogVisible] = useState(false);
+  const [draftDialogVisible, setDraftDialogVisible] = useState(false);
+
+  // Date picker
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   // Track unsaved changes
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
+  const draftSaveTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Store initial values for change detection
   const [initialTitle, setInitialTitle] = useState('');
@@ -61,11 +75,38 @@ export const EditorScreen: React.FC = () => {
   const [initialDate, setInitialDate] = useState('');
   const [initialTags, setInitialTags] = useState<Tag[]>([]);
 
+  // Draft data for restore dialog
+  const [draftData, setDraftData] = useState<Draft | null>(null);
+
   useEffect(() => {
     if (isEditing && diaryId) {
       loadDiary(diaryId);
+    } else {
+      checkDraft();
     }
   }, [diaryId]);
+
+  // Auto-save draft with debounce
+  useEffect(() => {
+    if (isSaving) return;
+
+    if (draftSaveTimer.current) {
+      clearTimeout(draftSaveTimer.current);
+    }
+
+    const hasContent = !!(title.trim() || content.trim() || media.length > 0);
+    if (hasContent) {
+      draftSaveTimer.current = setTimeout(() => {
+        autoSaveDraft();
+      }, 2000);
+    }
+
+    return () => {
+      if (draftSaveTimer.current) {
+        clearTimeout(draftSaveTimer.current);
+      }
+    };
+  }, [title, content, date, media, tags]);
 
   // Track unsaved changes
   useEffect(() => {
@@ -78,7 +119,6 @@ export const EditorScreen: React.FC = () => {
         JSON.stringify(tags) !== JSON.stringify(initialTags);
       setHasUnsavedChanges(hasChanges);
     } else {
-      // For new diary, check if there's any content
       const hasContent = !!(title.trim() || content.trim() || media.length > 0);
       setHasUnsavedChanges(hasContent);
     }
@@ -87,25 +127,97 @@ export const EditorScreen: React.FC = () => {
   // Listen for navigation events to detect back gesture/button
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
-      // Don't show dialog if we're currently saving
       if (isSaving || !hasUnsavedChanges) {
         return;
       }
 
-      // Prevent default navigation
       e.preventDefault();
 
-      // Store the pending navigation action
       setPendingNavigation(() => () => {
         navigation.dispatch(e.data.action);
       });
 
-      // Show unsaved changes dialog
       setUnsavedDialogVisible(true);
     });
 
     return unsubscribe;
   }, [navigation, hasUnsavedChanges, isSaving]);
+
+  const checkDraft = async (compareWith?: { title: string; content: string; date: string; media: MediaItem[]; tags: Tag[] }) => {
+    try {
+      const draftId = getDraftId(diaryId);
+      const draft = await getDraft(draftId);
+      if (!draft) return;
+
+      if (compareWith) {
+        const isIdentical =
+          draft.title === compareWith.title &&
+          draft.content === compareWith.content &&
+          draft.date === compareWith.date &&
+          JSON.stringify(draft.media) === JSON.stringify(compareWith.media) &&
+          JSON.stringify(draft.tags) === JSON.stringify(compareWith.tags);
+
+        if (isIdentical) {
+          await deleteDraft(draftId);
+          return;
+        }
+      }
+
+      setDraftData(draft);
+      setDraftDialogVisible(true);
+    } catch (error) {
+      console.error('Failed to check draft:', error);
+    }
+  };
+
+  const autoSaveDraft = async () => {
+    try {
+      const draftId = getDraftId(diaryId);
+
+      const hasChanges = isEditing
+        ? title !== initialTitle ||
+          content !== initialContent ||
+          date !== initialDate ||
+          JSON.stringify(media) !== JSON.stringify(originalMedia) ||
+          JSON.stringify(tags) !== JSON.stringify(initialTags)
+        : !!(title.trim() || content.trim() || media.length > 0);
+
+      if (!hasChanges) return;
+
+      await saveDraft({
+        id: draftId,
+        diaryId: diaryId || null,
+        title,
+        content,
+        date,
+        media,
+        tags,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to auto-save draft:', error);
+    }
+  };
+
+  const restoreDraft = () => {
+    if (!draftData) return;
+    setTitle(draftData.title);
+    setContent(draftData.content);
+    setDate(draftData.date);
+    setMedia(draftData.media);
+    setTags(draftData.tags);
+    setDraftDialogVisible(false);
+  };
+
+  const discardDraft = async () => {
+    try {
+      const draftId = getDraftId(diaryId);
+      await deleteDraft(draftId);
+    } catch (error) {
+      console.error('Failed to delete draft:', error);
+    }
+    setDraftDialogVisible(false);
+  };
 
   const loadDiary = async (id: string) => {
     try {
@@ -119,14 +231,20 @@ export const EditorScreen: React.FC = () => {
         setMedia(orderedMedia);
         setOriginalMedia(orderedMedia);
         setTags(diary.tags);
-        // Set initial values for change detection
         setInitialTitle(diary.title);
         setInitialContent(diary.content);
         setInitialDate(formatDateInputValue(diary.createdAt));
         setInitialTags(diary.tags);
+
+        await checkDraft({
+          title: diary.title,
+          content: diary.content,
+          date: formatDateInputValue(diary.createdAt),
+          media: orderedMedia,
+          tags: diary.tags,
+        });
       } else {
         setNotFoundDialogVisible(true);
-        navigation.goBack();
       }
     } catch (error) {
       console.error('Failed to load diary:', error);
@@ -164,14 +282,21 @@ export const EditorScreen: React.FC = () => {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (skipNavigation?: boolean) => {
     if (!title.trim() && !content.trim() && media.length === 0) {
       setEmptyContentDialogVisible(true);
-      return;
+      return false;
+    }
+
+    // Clear draft auto-save timer to prevent race after manual save
+    if (draftSaveTimer.current) {
+      clearTimeout(draftSaveTimer.current);
+      draftSaveTimer.current = null;
     }
 
     setLoading(true);
     setIsSaving(true);
+    const newlySavedUris: string[] = [];
     try {
       const parsedCreatedAt = parseDateInputValue(
         date,
@@ -182,26 +307,23 @@ export const EditorScreen: React.FC = () => {
         setInvalidDateDialogVisible(true);
         setLoading(false);
         setIsSaving(false);
-        return;
+        return false;
       }
 
       const savedMedia: MediaItem[] = [];
       for (const item of assignMediaPositions(media)) {
-        // Check if media is already in our storage directory
         const isInOurStorage = item.uri.startsWith(MEDIA_DIR_PATH);
         const isOriginal = originalMedia.some((m) => m.id === item.id);
 
         if (isInOurStorage) {
-          // Already in our storage - keep as is
           savedMedia.push(item);
         } else if (isOriginal) {
-          // Original media that was removed from this edit session
           savedMedia.push(item);
         } else {
-          // New media - need to save to our storage
           const fileName = `${generateId()}.${getMediaFileExtension(item)}`;
           const savedUri = await saveMedia(item.uri, fileName);
           savedMedia.push({ ...item, uri: savedUri });
+          newlySavedUris.push(savedUri);
         }
       }
 
@@ -220,13 +342,16 @@ export const EditorScreen: React.FC = () => {
         const removedMedia = originalMedia.filter(
           (om) => !savedMedia.some((sm) => sm.id === om.id)
         );
-        await deleteDiaryMedia(removedMedia);
         await updateDiary(entry);
+        await deleteDiaryMedia(removedMedia);
       } else {
         await createDiary(entry);
       }
 
-      // Reset change tracking after successful save
+      // Delete draft after successful save
+      const draftId = getDraftId(diaryId);
+      await deleteDraft(draftId);
+
       setHasUnsavedChanges(false);
       setIsSaving(false);
       if (isEditing) {
@@ -238,122 +363,168 @@ export const EditorScreen: React.FC = () => {
         setInitialCreatedAt(parsedCreatedAt);
       }
 
-      navigation.goBack();
+      if (!skipNavigation) {
+        navigation.goBack();
+      }
+      return true;
     } catch (error) {
       console.error('Failed to save diary:', error);
+      // Clean up newly saved media files on failure to prevent orphans
+      for (const uri of newlySavedUris) {
+        try {
+          await deleteMedia(uri);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
       setSaveErrorDialogVisible(true);
+      return false;
     } finally {
       setLoading(false);
       setIsSaving(false);
     }
   };
 
+  const handleDateConfirm = (selectedDate: Date) => {
+    setDate(formatDateInputValue(selectedDate.getTime()));
+    setShowDatePicker(false);
+  };
+
+  const dateObj = parseDateInputValue(date)
+    ? new Date(parseDateInputValue(date)!)
+    : new Date();
+
   return (
     <SafeAreaView style={styles.mainContainer} edges={['top']}>
       <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
         enabled
       >
         <View style={styles.contentContainer}>
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={styles.cancelText}>取消</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {isEditing ? '编辑日记' : '写日记'}
-          </Text>
-          <TouchableOpacity
-            style={[styles.headerButton, styles.saveButton]}
-            onPress={handleSave}
-            disabled={loading}
-          >
-            <Text style={[styles.saveText, loading && styles.disabledText]}>
-              {loading ? '保存中...' : '保存'}
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.headerButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Text style={styles.cancelText}>取消</Text>
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>
+              {isEditing ? '编辑日记' : '写日记'}
             </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.headerButton, styles.saveButton]}
+              onPress={() => handleSave()}
+              disabled={loading}
+            >
+              <Text style={[styles.saveText, loading && styles.disabledText]}>
+                {loading ? '保存中...' : '保存'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            style={styles.mediaScroll}
+            contentContainerStyle={styles.scrollContentContainer}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Date selector */}
+            <View style={styles.dateRow}>
+              <TouchableOpacity
+                onPress={() => setShowDatePicker(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dateText}>
+                  {date} {getWeekDayLabel(date)}
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.charCount}>{content.length} 字</Text>
+            </View>
+
+            {/* Title & Content area */}
+            <View style={styles.editorArea}>
+              <TextInput
+                style={styles.titleInput}
+                placeholder="标题（选填）"
+                placeholderTextColor="#c4b8ae"
+                value={title}
+                onChangeText={setTitle}
+                maxLength={100}
+                scrollEnabled={false}
+                autoCorrect={false}
+                autoCapitalize="none"
+                importantForAutofill="no"
+                multiline={false}
+                numberOfLines={1}
+              />
+              <View style={styles.divider} />
+              <TextInput
+                style={styles.contentInput}
+                placeholder="写下今天的故事..."
+                placeholderTextColor="#c4b8ae"
+                value={content}
+                onChangeText={setContent}
+                multiline
+                textAlignVertical="top"
+                scrollEnabled={false}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+            </View>
+
+            {/* Media section */}
+            <View style={styles.mediaSection}>
+              <TouchableOpacity onPress={pickImage} activeOpacity={0.7}>
+                <Text style={styles.mediaLabel}>添加媒体</Text>
+              </TouchableOpacity>
+              <MediaPicker media={media} onMediaChange={setMedia} />
+            </View>
+
+            <TagEditor
+              selectedTags={tags}
+              onTagsChange={setTags}
+            />
+
+            <View style={styles.bottomPadding} />
+          </ScrollView>
         </View>
-
-        <ScrollView
-          style={styles.mediaScroll}
-          contentContainerStyle={styles.scrollContentContainer}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-        <View style={styles.dateRow}>
-          <TextInput
-            style={styles.dateInput}
-            value={date}
-            onChangeText={setDate}
-            placeholder="选择日期"
-            placeholderTextColor="#c4b8ae"
-            scrollEnabled={false}
-            autoCorrect={false}
-            autoCapitalize="none"
-            importantForAutofill="no"
-          />
-          <Text style={styles.weekDay}>{getWeekDayLabel(date)}</Text>
-          <Text style={styles.charCount}>{content.length} 字</Text>
-        </View>
-
-        <View style={styles.cardContainer}>
-          <TextInput
-            style={styles.titleInput}
-            placeholder="标题（选填）"
-            placeholderTextColor="#c4b8ae"
-            value={title}
-            onChangeText={setTitle}
-            maxLength={100}
-            scrollEnabled={false}
-            autoCorrect={false}
-            autoCapitalize="none"
-            importantForAutofill="no"
-            multiline={false}
-            numberOfLines={1}
-          />
-          <View style={styles.divider} />
-          <TextInput
-            style={styles.contentInput}
-            placeholder="写下今天的故事..."
-            placeholderTextColor="#c4b8ae"
-            value={content}
-            onChangeText={setContent}
-            multiline
-            textAlignVertical="top"
-            scrollEnabled={false}
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
-        </View>
-
-        <View style={styles.mediaSection}>
-          <TouchableOpacity onPress={pickImage} activeOpacity={0.7}>
-            <Text style={styles.mediaLabel}>添加媒体</Text>
-          </TouchableOpacity>
-          <MediaPicker media={media} onMediaChange={setMedia} />
-        </View>
-
-        <TagEditor
-          selectedTags={tags}
-          onTagsChange={setTags}
-        />
-
-        <View style={styles.bottomPadding} />
-        </ScrollView>
-      </View>
       </KeyboardAvoidingView>
+
+      {/* Draft restore dialog */}
+      <StyledDialog
+        visible={draftDialogVisible}
+        title="发现草稿"
+        message="检测到未保存的草稿，是否恢复？"
+        buttons={[
+          {
+            text: '丢弃',
+            style: 'destructive',
+            onPress: discardDraft,
+          },
+          {
+            text: '恢复',
+            style: 'default',
+            onPress: restoreDraft,
+          },
+        ]}
+        onDismiss={() => setDraftDialogVisible(false)}
+      />
 
       {/* Not found dialog */}
       <StyledDialog
         visible={notFoundDialogVisible}
         title="提示"
         message="这篇日记不存在或已被删除"
-        buttons={[{ text: '确定', style: 'default', onPress: () => setNotFoundDialogVisible(false) }]}
-        onDismiss={() => setNotFoundDialogVisible(false)}
+        buttons={[{ text: '确定', style: 'default', onPress: () => {
+          setNotFoundDialogVisible(false);
+          navigation.goBack();
+        } }]}
+        onDismiss={() => {
+          setNotFoundDialogVisible(false);
+          navigation.goBack();
+        }}
       />
 
       {/* Load error dialog */}
@@ -411,8 +582,14 @@ export const EditorScreen: React.FC = () => {
             setUnsavedDialogVisible(false);
             setPendingNavigation(null);
           }},
-          { text: '不保存', style: 'destructive', onPress: () => {
+          { text: '不保存', style: 'destructive', onPress: async () => {
             setUnsavedDialogVisible(false);
+            try {
+              const draftId = getDraftId(diaryId);
+              await deleteDraft(draftId);
+            } catch (error) {
+              console.error('Failed to delete draft on discard:', error);
+            }
             if (pendingNavigation) {
               pendingNavigation();
               setPendingNavigation(null);
@@ -420,9 +597,8 @@ export const EditorScreen: React.FC = () => {
           }},
           { text: '保存', style: 'default', onPress: async () => {
             setUnsavedDialogVisible(false);
-            // Save first, then navigate
-            await handleSave();
-            if (pendingNavigation) {
+            const success = await handleSave(true);
+            if (success && pendingNavigation) {
               pendingNavigation();
               setPendingNavigation(null);
             }
@@ -433,6 +609,13 @@ export const EditorScreen: React.FC = () => {
           setPendingNavigation(null);
         }}
       />
+
+      <DatePickerModal
+        visible={showDatePicker}
+        date={dateObj}
+        onConfirm={handleDateConfirm}
+        onCancel={() => setShowDatePicker(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -440,23 +623,13 @@ export const EditorScreen: React.FC = () => {
 const styles = StyleSheet.create({
   mainContainer: {
     flex: 1,
-    backgroundColor: '#f8f6f3',
+    backgroundColor: PAPER_BG,
   },
   contentContainer: {
     flex: 1,
   },
   mediaScroll: {
     flex: 1,
-  },
-  fixedContent: {
-    overflow: 'hidden',
-  },
-  contentWrapper: {
-    flex: 1,
-    overflow: 'hidden',
-  },
-  fixedTop: {
-    overflow: 'hidden',
   },
   keyboardView: {
     flex: 1,
@@ -468,9 +641,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#f8f6f3',
+    backgroundColor: PAPER_BG,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2ddd8',
+    borderBottomColor: 'rgba(196, 112, 48, 0.1)',
   },
   headerButton: {
     minWidth: 50,
@@ -478,19 +651,22 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 17,
     fontWeight: '600',
-    color: '#3d2c1e',
+    color: TEXT_PRIMARY,
+    fontFamily: 'LXGWWenKaiLite',
   },
   cancelText: {
     fontSize: 16,
-    color: '#827066',
+    color: TEXT_SECONDARY,
+    fontFamily: 'LXGWWenKaiLite',
   },
   saveButton: {
     alignItems: 'flex-end',
   },
   saveText: {
     fontSize: 16,
-    color: '#c47030',
+    color: BRAND_GOLD,
     fontWeight: '600',
+    fontFamily: 'LXGWWenKaiLite',
   },
   disabledText: {
     color: '#c4b8ae',
@@ -501,72 +677,59 @@ const styles = StyleSheet.create({
   dateRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 12,
-    backgroundColor: '#f8f6f3',
+    backgroundColor: PAPER_BG,
     marginTop: 8,
   },
-  dateInput: {
-    fontSize: 14,
-    color: '#c47030',
+  dateText: {
+    fontSize: 15,
+    color: BRAND_GOLD,
     fontWeight: '500',
-    backgroundColor: 'transparent',
-    padding: 0,
-    borderWidth: 0,
-    minWidth: 100,
-    height: 30,
-  },
-  weekDay: {
-    fontSize: 14,
-    color: '#827066',
-    marginLeft: 12,
+    fontFamily: 'LXGWWenKaiLite',
   },
   charCount: {
     fontSize: 12,
-    color: '#a48a74',
-    marginLeft: 'auto',
+    color: TEXT_MUTED,
+    fontFamily: 'LXGWWenKaiLite',
   },
-  cardContainer: {
-    backgroundColor: '#fdfcfb',
+  editorArea: {
     marginHorizontal: 16,
-    borderRadius: 16,
     padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(210, 195, 175, 0.4)',
-    shadowColor: '#3d2c1e',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    overflow: 'hidden',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(196, 112, 48, 0.12)',
   },
   titleInput: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '600',
-    color: '#3d2c1e',
+    color: TEXT_PRIMARY,
     paddingVertical: 0,
     paddingHorizontal: 4,
     borderWidth: 0,
     backgroundColor: 'transparent',
     height: 40,
-    fontFamily: 'SmileySans',
+    fontFamily: 'LXGWWenKaiLite',
+    letterSpacing: 0.5,
   },
   divider: {
     height: 1,
-    backgroundColor: '#e2ddd8',
+    backgroundColor: 'rgba(196, 112, 48, 0.15)',
     marginVertical: 12,
   },
   contentInput: {
-    fontSize: 16,
-    color: '#3d2c1e',
-    lineHeight: 26,
-    paddingVertical: 16,
+    fontSize: 17,
+    color: TEXT_PRIMARY,
+    lineHeight: 30,
+    paddingVertical: 8,
     paddingHorizontal: 4,
     minHeight: 220,
     borderWidth: 0,
     backgroundColor: 'transparent',
     fontFamily: 'LXGWWenKaiLite',
+    letterSpacing: 0.3,
   },
   mediaSection: {
     paddingHorizontal: 16,
@@ -575,16 +738,17 @@ const styles = StyleSheet.create({
   mediaLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#c47030',
+    color: BRAND_GOLD,
     marginBottom: 12,
     paddingVertical: 10,
     paddingHorizontal: 16,
-    backgroundColor: '#ebe7e3',
+    backgroundColor: 'rgba(196, 112, 48, 0.08)',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e2ddd8',
+    borderColor: 'rgba(196, 112, 48, 0.15)',
     overflow: 'hidden',
     textAlign: 'center',
+    fontFamily: 'LXGWWenKaiLite',
   },
   bottomPadding: {
     height: 40,

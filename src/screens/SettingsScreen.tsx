@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types';
 import { BackupCancelledError, exportBackup, importBackup } from '../services/backup';
 import { getAllDiaries } from '../services/database';
+import { APP_VERSION } from '../constants';
 import { StyledDialog } from '../components/StyledDialog';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
@@ -24,6 +25,8 @@ export const SettingsScreen: React.FC = () => {
   const [importConfirmDialogVisible, setImportConfirmDialogVisible] = useState(false);
   const [lastExportResult, setLastExportResult] = useState({ diaryCount: 0, mediaCount: 0 });
   const [lastImportResult, setLastImportResult] = useState({ diaryCount: 0, mediaCount: 0 });
+  const [exportProgress, setExportProgress] = useState<{ current: number; total: number; stage: string } | null>(null);
+  const [exportErrorMessage, setExportErrorMessage] = useState('');
 
   const handleExport = async () => {
     try {
@@ -34,19 +37,25 @@ export const SettingsScreen: React.FC = () => {
       }
 
       setExporting(true);
-      const result = await exportBackup();
+      setExportErrorMessage('');
+      const result = await exportBackup((current, total, stage) => {
+        setExportProgress({ current, total, stage });
+      });
       setLastExportResult(result);
       setExportSuccessDialogVisible(true);
     } catch (error) {
       if (error instanceof BackupCancelledError) {
         setExporting(false);
+        setExportProgress(null);
         return;
       }
 
       console.error('Export failed:', error);
+      setExportErrorMessage(error instanceof Error ? error.message : '导出失败');
       setExportErrorDialogVisible(true);
     } finally {
       setExporting(false);
+      setExportProgress(null);
     }
   };
 
@@ -100,7 +109,14 @@ export const SettingsScreen: React.FC = () => {
               </Text>
             </View>
             {exporting ? (
-              <ActivityIndicator size="small" color="#c47030" />
+              <View style={styles.progressContainer}>
+                <ActivityIndicator size="small" color="#c47030" />
+                {exportProgress && (
+                  <Text style={styles.progressText}>
+                    正在导出 {exportProgress.current}/{exportProgress.total}...
+                  </Text>
+                )}
+              </View>
             ) : (
               <Text style={styles.arrow}>{'>'}</Text>
             )}
@@ -129,7 +145,7 @@ export const SettingsScreen: React.FC = () => {
           <Text style={styles.sectionTitle}>关于</Text>
           <View style={styles.item}>
             <Text style={styles.itemText}>版本</Text>
-            <Text style={styles.itemValue}>1.0.0</Text>
+            <Text style={styles.itemValue}>{APP_VERSION}</Text>
           </View>
           <View style={[styles.item, styles.lastItem]}>
             <Text style={styles.itemText}>应用名称</Text>
@@ -159,8 +175,8 @@ export const SettingsScreen: React.FC = () => {
       {/* Export error dialog */}
       <StyledDialog
         visible={exportErrorDialogVisible}
-        title="错误"
-        message="导出失败"
+        title="导出失败"
+        message={exportErrorMessage || '导出过程中发生错误'}
         buttons={[{ text: '确定', style: 'default', onPress: () => setExportErrorDialogVisible(false) }]}
         onDismiss={() => setExportErrorDialogVisible(false)}
       />
@@ -277,5 +293,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#c4b8ae',
     fontWeight: '300',
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  progressText: {
+    fontSize: 13,
+    color: '#c47030',
+    fontFamily: 'LXGWWenKaiLite',
   },
 });

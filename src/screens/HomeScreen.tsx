@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { View, FlatList, StyleSheet, TouchableOpacity, Text, RefreshControl, ActivityIndicator } from 'react-native';
-import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RootStackParamList, DiaryEntry } from '../types';
@@ -15,16 +15,17 @@ const CACHE_TTL_MS = 1000;
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
-  const isFocused = useIsFocused();
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
-  // Cache refs to avoid redundant loads
+  // Cache refs to avoid redundant loads and stale closures
   const lastLoadTimeRef = useRef<number>(0);
   const isLoadingRef = useRef(false);
   const currentPageRef = useRef(0);
+  const diariesRef = useRef(diaries);
+  diariesRef.current = diaries;
 
   const loadDiariesPage = useCallback(async (page: number, force = false) => {
     if (isLoadingRef.current && !force && page > 0) return;
@@ -32,7 +33,7 @@ export const HomeScreen: React.FC = () => {
     const now = Date.now();
 
     // For initial load, use cache if valid
-    if (page === 0 && !force && diaries.length > 0 && (now - lastLoadTimeRef.current) < CACHE_TTL_MS) {
+    if (page === 0 && !force && diariesRef.current.length > 0 && (now - lastLoadTimeRef.current) < CACHE_TTL_MS) {
       return;
     }
 
@@ -54,16 +55,14 @@ export const HomeScreen: React.FC = () => {
     } finally {
       isLoadingRef.current = false;
     }
-  }, [diaries.length]);
+  }, []);
 
-  // Initial load
+  // Initial load on focus
   useFocusEffect(
     useCallback(() => {
-      if (isFocused) {
-        currentPageRef.current = 0;
-        loadDiariesPage(0, true);
-      }
-    }, [isFocused, loadDiariesPage])
+      currentPageRef.current = 0;
+      loadDiariesPage(0, true);
+    }, [loadDiariesPage])
   );
 
   // Load more when scrolling to bottom

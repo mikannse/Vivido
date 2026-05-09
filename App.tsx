@@ -26,6 +26,40 @@ function WebNotSupported() {
   );
 }
 
+// Error Boundary to catch render errors gracefully
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('App ErrorBoundary caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <SafeAreaProvider>
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorTitle}>应用遇到了问题</Text>
+            <Text style={styles.errorText}>请尝试重启应用</Text>
+          </View>
+          <StatusBar style="auto" />
+        </SafeAreaProvider>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [isWeb, setIsWeb] = useState(false);
@@ -36,7 +70,6 @@ export default function App() {
     'SmileySans': require('./assets/SmileySans-Oblique.ttf'),
   });
 
-  // Initialize database in parallel with fonts loading
   const retryInit = () => {
     setInitError(null);
     setIsReady(false);
@@ -47,7 +80,6 @@ export default function App() {
       .catch((error) => {
         console.error('Failed to initialize database:', error);
         setInitError('数据库初始化失败，请重试。');
-        setIsReady(true);
       });
   };
 
@@ -58,8 +90,6 @@ export default function App() {
       return;
     }
 
-    // Run database initialization without waiting
-    // App will show immediately once database is ready, fonts load in background
     initDatabase()
       .then(() => {
         setIsReady(true);
@@ -67,12 +97,12 @@ export default function App() {
       .catch((error) => {
         console.error('Failed to initialize database:', error);
         setInitError('数据库初始化失败，请重试。');
-        setIsReady(true);
       });
   }, []);
 
-  // Show loading screen only while database or fonts are initializing
-  if (!isReady || !fontsLoaded) {
+  // Show loading screen while database is initializing or fonts are loading
+  // If database fails, show error instead of main UI
+  if ((!isReady && !initError) || !fontsLoaded) {
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingText}>加载中...</Text>
@@ -105,26 +135,28 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <Stack.Navigator
-          screenOptions={{
-            headerShown: false,
-          }}
-        >
-          <Stack.Screen name="Home" component={HomeScreen} />
-          <Stack.Screen
-            name="Editor"
-            component={EditorScreen}
-            options={{ presentation: 'modal' }}
-          />
-          <Stack.Screen name="Detail" component={DetailScreen} />
-          <Stack.Screen name="Settings" component={SettingsScreen} />
-          <Stack.Screen name="Discovery" component={DiscoveryScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
-      <StatusBar style="auto" />
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <NavigationContainer>
+          <Stack.Navigator
+            screenOptions={{
+              headerShown: false,
+            }}
+          >
+            <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen
+              name="Editor"
+              component={EditorScreen}
+              options={{ presentation: 'modal' }}
+            />
+            <Stack.Screen name="Detail" component={DetailScreen} />
+            <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="Discovery" component={DiscoveryScreen} />
+          </Stack.Navigator>
+        </NavigationContainer>
+        <StatusBar style="auto" />
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
 

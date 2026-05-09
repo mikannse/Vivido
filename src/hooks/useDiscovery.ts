@@ -27,6 +27,7 @@ interface UseDiscoveryReturn {
   setSearchQuery: (query: string) => void;
   setTimeFilter: (filter: TimeFilter) => void;
   toggleTag: (tagId: string) => void;
+  clearTags: () => void;
   selectDate: (date: string | null) => void;
   setMonthFilter: (filter: MonthFilter | null) => void;
   clearFilters: () => void;
@@ -48,6 +49,13 @@ export const useDiscovery = (): UseDiscoveryReturn => {
   const [monthFilter, setMonthFilterState] = useState<MonthFilter | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Debounce search query
   useEffect(() => {
@@ -65,6 +73,7 @@ export const useDiscovery = (): UseDiscoveryReturn => {
   }, [searchQuery]);
 
   const fetchData = useCallback(async () => {
+    if (!isMountedRef.current) return;
     setIsLoading(true);
     setError(null);
 
@@ -75,6 +84,8 @@ export const useDiscovery = (): UseDiscoveryReturn => {
         getHeatmapData(365, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
         getWordFrequency(1, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
       ]);
+
+      if (!isMountedRef.current) return;
 
       setDiaries(diariesResult);
       setTags(tagsResult);
@@ -98,9 +109,13 @@ export const useDiscovery = (): UseDiscoveryReturn => {
       setWordCloudData(wordCloud);
     } catch (err) {
       console.error('Failed to fetch discovery data:', err);
-      setError('加载数据失败');
+      if (isMountedRef.current) {
+        setError('加载数据失败');
+      }
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [debouncedSearchQuery, selectedDate, selectedTags, timeFilter, monthFilter]);
 
@@ -124,6 +139,10 @@ export const useDiscovery = (): UseDiscoveryReturn => {
         ? prev.filter((id) => id !== tagId)
         : [...prev, tagId]
     );
+  }, []);
+
+  const clearTags = useCallback(() => {
+    setSelectedTags([]);
   }, []);
 
   const selectDate = useCallback((date: string | null) => {
@@ -169,6 +188,7 @@ export const useDiscovery = (): UseDiscoveryReturn => {
     setSearchQuery,
     setTimeFilter,
     toggleTag,
+    clearTags,
     selectDate,
     setMonthFilter,
     clearFilters,

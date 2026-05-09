@@ -4,6 +4,7 @@ import { getDateRangeForKey } from '../utils/date';
 import { generateId } from '../utils/uuid';
 
 const DB_NAME = 'diary.db';
+export const SCHEMA_VERSION = 2;
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -42,8 +43,27 @@ const ensureTagTables = async (): Promise<void> => {
   `);
 };
 
+const ensureDraftTable = async (): Promise<void> => {
+  if (!db) throw new Error('Database not initialized');
+
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS drafts (
+      id TEXT PRIMARY KEY NOT NULL,
+      diaryId TEXT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      date TEXT NOT NULL,
+      media TEXT NOT NULL,
+      tags TEXT NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+  `);
+};
+
 export const initDatabase = async (): Promise<void> => {
   db = await SQLite.openDatabaseAsync(DB_NAME);
+
+  await db.execAsync(`PRAGMA foreign_keys = ON;`);
 
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS diaries (
@@ -68,6 +88,60 @@ export const initDatabase = async (): Promise<void> => {
 
   await ensureMediaColumns();
   await ensureTagTables();
+  await ensureDraftTable();
+  await ensureSchemaVersion();
+};
+
+const MIGRATIONS: Record<number, string[]> = {
+  2: [], // Version 2 is baseline; structural additions handled by ensure* helpers
+};
+
+const ensureSchemaVersion = async (): Promise<void> => {
+  if (!db) throw new Error('Database not initialized');
+
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER PRIMARY KEY,
+      description TEXT,
+      appliedAt INTEGER NOT NULL
+    );
+  `);
+
+  const row = await db.getFirstAsync<{ version: number }>(
+    'SELECT version FROM schema_version ORDER BY version DESC LIMIT 1'
+  );
+
+  const currentVersion = row?.version ?? 0;
+
+  if (currentVersion === 0) {
+    await db.runAsync(
+      'INSERT INTO schema_version (version, description, appliedAt) VALUES (?, ?, ?)',
+      [SCHEMA_VERSION, 'Initial schema', Date.now()]
+    );
+  } else if (currentVersion < SCHEMA_VERSION) {
+    for (let v = currentVersion + 1; v <= SCHEMA_VERSION; v++) {
+      const migrations = MIGRATIONS[v];
+      if (migrations) {
+        for (const sql of migrations) {
+          await db.execAsync(sql);
+        }
+      }
+      await db.runAsync(
+        'INSERT INTO schema_version (version, description, appliedAt) VALUES (?, ?, ?)',
+        [v, `Migration to version ${v}`, Date.now()]
+      );
+    }
+  }
+};
+
+export const getSchemaVersion = async (): Promise<number> => {
+  if (!db) throw new Error('Database not initialized');
+
+  const row = await db.getFirstAsync<{ version: number }>(
+    'SELECT version FROM schema_version ORDER BY version DESC LIMIT 1'
+  );
+
+  return row?.version ?? 0;
 };
 
 // Tag operations
@@ -352,12 +426,12 @@ const buildDiscoveryWhereClause = (
   }
 
   if (tagIds.length > 0) {
-    // AND logic: diary must have ALL selected tags
-    whereSql += ` AND (
-      SELECT COUNT(DISTINCT dt.tagId) FROM diary_tags dt
+    // OR logic: diary must have ANY of the selected tags
+    whereSql += ` AND EXISTS (
+      SELECT 1 FROM diary_tags dt
       WHERE dt.diaryId = diaries.id AND dt.tagId IN (${tagIds.map(() => '?').join(',')})
-    ) = ?`;
-    params.push(...tagIds, tagIds.length);
+    )`;
+    params.push(...tagIds);
   }
 
   return { whereSql, params };
@@ -483,15 +557,12 @@ export const getWordFrequency = async (
   const stopWords = new Set(['的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这', '那', '什么', '吗', '吧', '呢', '啊', '哦', '嗯', '呀', '哈', '啦']);
 
   for (const diary of diaries) {
-    // Extract Chinese characters and words (2-4 characters)
-    const content = diary.content;
-    for (let i = 0; i < content.length; i++) {
-      // Extract 2-character words
-      if (i < content.length - 1) {
-        const word = content.substring(i, i + 2);
-        if (!stopWords.has(word) && /[\u4e00-\u9fa5]/.test(word)) {
-          wordCount.set(word, (wordCount.get(word) || 0) + 1);
-        }
+    // Pre-filter non-Chinese characters to reduce iteration and regex overhead
+    const chineseChars = diary.content.replace(/[^\u4e00-\u9fa5]/g, '');
+    for (let i = 0; i < chineseChars.length - 1; i++) {
+      const word = chineseChars.substring(i, i + 2);
+      if (!stopWords.has(word)) {
+        wordCount.set(word, (wordCount.get(word) || 0) + 1);
       }
     }
   }
@@ -502,59 +573,65 @@ export const getWordFrequency = async (
 export const createDiary = async (entry: DiaryEntry): Promise<void> => {
   if (!db) throw new Error('Database not initialized');
 
-  await db.runAsync(
-    'INSERT INTO diaries (id, title, content, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
-    [entry.id, entry.title, entry.content, entry.createdAt, entry.updatedAt]
-  );
-
-  for (const media of entry.media) {
-    await db.runAsync(
-      'INSERT INTO media (id, diaryId, type, uri, thumbnail, position) VALUES (?, ?, ?, ?, ?, ?)',
-      [media.id, entry.id, media.type, media.uri, media.thumbnail || null, media.position ?? 0]
+  await db.withTransactionAsync(async () => {
+    await db!.runAsync(
+      'INSERT INTO diaries (id, title, content, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
+      [entry.id, entry.title, entry.content, entry.createdAt, entry.updatedAt]
     );
-  }
 
-  for (const tag of entry.tags) {
-    await db.runAsync(
-      'INSERT OR IGNORE INTO diary_tags (diaryId, tagId) VALUES (?, ?)',
-      [entry.id, tag.id]
-    );
-  }
+    for (const media of entry.media) {
+      await db!.runAsync(
+        'INSERT INTO media (id, diaryId, type, uri, thumbnail, position) VALUES (?, ?, ?, ?, ?, ?)',
+        [media.id, entry.id, media.type, media.uri, media.thumbnail || null, media.position ?? 0]
+      );
+    }
+
+    for (const tag of entry.tags) {
+      await db!.runAsync(
+        'INSERT OR IGNORE INTO diary_tags (diaryId, tagId) VALUES (?, ?)',
+        [entry.id, tag.id]
+      );
+    }
+  });
 };
 
 export const updateDiary = async (entry: DiaryEntry): Promise<void> => {
   if (!db) throw new Error('Database not initialized');
 
-  await db.runAsync(
-    'UPDATE diaries SET title = ?, content = ?, createdAt = ?, updatedAt = ? WHERE id = ?',
-    [entry.title, entry.content, entry.createdAt, entry.updatedAt, entry.id]
-  );
-
-  await db.runAsync('DELETE FROM media WHERE diaryId = ?', [entry.id]);
-
-  for (const media of entry.media) {
-    await db.runAsync(
-      'INSERT INTO media (id, diaryId, type, uri, thumbnail, position) VALUES (?, ?, ?, ?, ?, ?)',
-      [media.id, entry.id, media.type, media.uri, media.thumbnail || null, media.position ?? 0]
+  await db.withTransactionAsync(async () => {
+    await db!.runAsync(
+      'UPDATE diaries SET title = ?, content = ?, createdAt = ?, updatedAt = ? WHERE id = ?',
+      [entry.title, entry.content, entry.createdAt, entry.updatedAt, entry.id]
     );
-  }
 
-  await db.runAsync('DELETE FROM diary_tags WHERE diaryId = ?', [entry.id]);
+    await db!.runAsync('DELETE FROM media WHERE diaryId = ?', [entry.id]);
 
-  for (const tag of entry.tags) {
-    await db.runAsync(
-      'INSERT OR IGNORE INTO diary_tags (diaryId, tagId) VALUES (?, ?)',
-      [entry.id, tag.id]
-    );
-  }
+    for (const media of entry.media) {
+      await db!.runAsync(
+        'INSERT INTO media (id, diaryId, type, uri, thumbnail, position) VALUES (?, ?, ?, ?, ?, ?)',
+        [media.id, entry.id, media.type, media.uri, media.thumbnail || null, media.position ?? 0]
+      );
+    }
+
+    await db!.runAsync('DELETE FROM diary_tags WHERE diaryId = ?', [entry.id]);
+
+    for (const tag of entry.tags) {
+      await db!.runAsync(
+        'INSERT OR IGNORE INTO diary_tags (diaryId, tagId) VALUES (?, ?)',
+        [entry.id, tag.id]
+      );
+    }
+  });
 };
 
 export const deleteDiary = async (id: string): Promise<void> => {
   if (!db) throw new Error('Database not initialized');
 
-  await db.runAsync('DELETE FROM diary_tags WHERE diaryId = ?', [id]);
-  await db.runAsync('DELETE FROM media WHERE diaryId = ?', [id]);
-  await db.runAsync('DELETE FROM diaries WHERE id = ?', [id]);
+  await db.withTransactionAsync(async () => {
+    await db!.runAsync('DELETE FROM diary_tags WHERE diaryId = ?', [id]);
+    await db!.runAsync('DELETE FROM media WHERE diaryId = ?', [id]);
+    await db!.runAsync('DELETE FROM diaries WHERE id = ?', [id]);
+  });
 };
 
 export const replaceAllDiaries = async (entries: DiaryEntry[]): Promise<void> => {
@@ -625,4 +702,117 @@ export const replaceAllData = async (entries: DiaryEntry[], tags: Tag[]): Promis
       }
     }
   });
+};
+
+export const cleanupUnusedTags = async (): Promise<number> => {
+  if (!db) throw new Error('Database not initialized');
+
+  const result = await db.runAsync(
+    'DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tagId FROM diary_tags)'
+  );
+
+  return result.changes ?? 0;
+};
+
+// Draft operations
+export interface Draft {
+  id: string;
+  diaryId: string | null;
+  title: string;
+  content: string;
+  date: string;
+  media: MediaItem[];
+  tags: Tag[];
+  updatedAt: number;
+}
+
+export const saveDraft = async (draft: Draft): Promise<void> => {
+  if (!db) throw new Error('Database not initialized');
+
+  await db.runAsync(
+    'INSERT OR REPLACE INTO drafts (id, diaryId, title, content, date, media, tags, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      draft.id,
+      draft.diaryId,
+      draft.title,
+      draft.content,
+      draft.date,
+      JSON.stringify(draft.media),
+      JSON.stringify(draft.tags),
+      draft.updatedAt,
+    ]
+  );
+};
+
+export const getDraft = async (id: string): Promise<Draft | null> => {
+  if (!db) throw new Error('Database not initialized');
+
+  const row = await db.getFirstAsync<{
+    id: string;
+    diaryId: string | null;
+    title: string;
+    content: string;
+    date: string;
+    media: string;
+    tags: string;
+    updatedAt: number;
+  }>('SELECT * FROM drafts WHERE id = ?', [id]);
+
+  if (!row) return null;
+
+  return {
+    ...row,
+    media: JSON.parse(row.media) as MediaItem[],
+    tags: JSON.parse(row.tags) as Tag[],
+  };
+};
+
+export const getDraftForDiary = async (diaryId: string): Promise<Draft | null> => {
+  if (!db) throw new Error('Database not initialized');
+
+  const row = await db.getFirstAsync<{
+    id: string;
+    diaryId: string | null;
+    title: string;
+    content: string;
+    date: string;
+    media: string;
+    tags: string;
+    updatedAt: number;
+  }>('SELECT * FROM drafts WHERE diaryId = ?', [diaryId]);
+
+  if (!row) return null;
+
+  return {
+    ...row,
+    media: JSON.parse(row.media) as MediaItem[],
+    tags: JSON.parse(row.tags) as Tag[],
+  };
+};
+
+export const deleteDraft = async (id: string): Promise<void> => {
+  if (!db) throw new Error('Database not initialized');
+
+  await db.runAsync('DELETE FROM drafts WHERE id = ?', [id]);
+};
+
+export const getAllDrafts = async (): Promise<Draft[]> => {
+  if (!db) throw new Error('Database not initialized');
+
+  const rows = await db.getAllAsync<{
+    id: string;
+    diaryId: string | null;
+    title: string;
+    content: string;
+    date: string;
+    media: string;
+    tags: string;
+    updatedAt: number;
+  }>('SELECT * FROM drafts ORDER BY updatedAt DESC');
+
+  return rows.map((row) => ({
+    ...row,
+    media: JSON.parse(row.media) as MediaItem[],
+    tags: JSON.parse(row.tags) as Tag[],
+  }));
 };

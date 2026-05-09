@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,15 +20,19 @@ import { FullScreenGallery } from '../components/FullScreenGallery';
 import { StyledDialog } from '../components/StyledDialog';
 import { getOrderedMedia } from '../utils/media';
 import { VideoPoster } from '../components/VideoPoster';
+import { DiaryContent } from '../components/DiaryContent';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Detail'>;
 type DetailRouteProp = RouteProp<RootStackParamList, 'Detail'>;
 
 const { width } = Dimensions.get('window');
 const BRAND_GOLD = '#c47030';
+
+const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 50 };
 const TEXT_PRIMARY = '#3d2c1e';
 const TEXT_SECONDARY = '#7a6250';
 const TEXT_MUTED = '#a48a74';
+const PAPER_BG = '#f5f0e6';
 
 const formatDateFull = (timestamp: number): string => {
   const date = new Date(timestamp);
@@ -49,7 +53,10 @@ const ArtisticDateHeader = ({ timestamp }: { timestamp: number }) => {
 
   return (
     <View style={styles.artisticDateContainer}>
-      <Text style={styles.artisticDay}>{day}</Text>
+      <View style={styles.dateLeftColumn}>
+        <Text style={styles.artisticDay}>{day}</Text>
+      </View>
+      <View style={styles.dateDivider} />
       <View style={styles.artisticDateRight}>
         <Text style={styles.artisticMonth}>{month}</Text>
         <Text style={styles.artisticYear}>{year}</Text>
@@ -82,6 +89,12 @@ export const DetailScreen: React.FC = () => {
   const [errorDialogVisible, setErrorDialogVisible] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
+
+  // Reset media scroll when diary changes
+  useEffect(() => {
+    setCurrentMediaIndex(0);
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [diary?.id]);
 
   const loadDiary = useCallback(async () => {
     setLoading(true);
@@ -118,8 +131,8 @@ export const DetailScreen: React.FC = () => {
     setDeleteDialogVisible(false);
     try {
       if (diary) {
-        await deleteDiaryMedia(diary.media);
         await deleteDiary(diaryId);
+        await deleteDiaryMedia(diary.media);
       }
       navigation.goBack();
     } catch (error) {
@@ -218,7 +231,7 @@ export const DetailScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
 
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         {/* Header */}
@@ -259,7 +272,7 @@ export const DetailScreen: React.FC = () => {
                 pagingEnabled
                 showsHorizontalScrollIndicator={false}
                 onViewableItemsChanged={onViewableItemsChanged}
-                viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+                viewabilityConfig={VIEWABILITY_CONFIG}
               />
               {renderPageIndicator()}
             </View>
@@ -270,15 +283,15 @@ export const DetailScreen: React.FC = () => {
             {/* Artistic date */}
             <ArtisticDateHeader timestamp={diary.createdAt} />
 
-            {/* Title card */}
-            <View style={styles.card}>
+            {/* Title */}
+            <View style={styles.titleSection}>
               <Text style={styles.title}>{diary.title || '无标题'}</Text>
             </View>
 
-            {/* Content card */}
+            {/* Content */}
             {diary.content ? (
-              <View style={styles.card}>
-                <Text style={styles.contentText}>{diary.content}</Text>
+              <View style={styles.contentSection}>
+                <DiaryContent content={diary.content} />
                 <Text style={styles.charCount}>{diary.content.length} 字</Text>
               </View>
             ) : null}
@@ -351,7 +364,7 @@ export const DetailScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f6f3',
+    backgroundColor: PAPER_BG,
   },
   loading: {
     flex: 1,
@@ -522,25 +535,33 @@ const styles = StyleSheet.create({
     width: 20,
   },
   contentStack: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingHorizontal: 28,
+    paddingTop: 12,
   },
   artisticDateContainer: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-    marginBottom: 20,
+    alignItems: 'center',
+    marginBottom: 24,
     paddingHorizontal: 4,
   },
+  dateLeftColumn: {
+    alignItems: 'flex-end',
+  },
   artisticDay: {
-    fontSize: 72,
+    fontSize: 64,
     fontWeight: '700',
     color: BRAND_GOLD,
     fontFamily: 'PlayfairDisplay',
-    lineHeight: 80,
+    lineHeight: 72,
+  },
+  dateDivider: {
+    width: 1,
+    height: 48,
+    backgroundColor: 'rgba(196, 112, 48, 0.2)',
+    marginHorizontal: 14,
   },
   artisticDateRight: {
-    marginLeft: 16,
-    paddingBottom: 8,
+    paddingBottom: 4,
   },
   artisticMonth: {
     fontSize: 20,
@@ -553,31 +574,29 @@ const styles = StyleSheet.create({
     fontFamily: 'LXGWWenKaiLite',
     marginTop: 4,
   },
-  card: {
-    backgroundColor: 'rgba(253, 252, 251, 0.95)',
-    borderRadius: 20,
-    padding: 24,
+  titleSection: {
+    marginBottom: 24,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(196, 112, 48, 0.15)',
+  },
+  contentSection: {
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(210, 195, 175, 0.3)',
-    shadowColor: TEXT_PRIMARY,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 4,
   },
   title: {
     fontSize: 26,
-    fontWeight: '700',
+    fontWeight: '600',
     color: TEXT_PRIMARY,
-    lineHeight: 34,
-    fontFamily: 'SmileySans',
+    lineHeight: 38,
+    fontFamily: 'LXGWWenKaiLite',
+    letterSpacing: 1,
   },
   contentText: {
-    fontSize: 16,
+    fontSize: 17,
     color: TEXT_PRIMARY,
-    lineHeight: 28,
+    lineHeight: 32,
     fontFamily: 'LXGWWenKaiLite',
+    letterSpacing: 0.3,
   },
   watermark: {
     alignItems: 'center',
@@ -612,10 +631,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingVertical: 16,
     paddingHorizontal: 20,
-    backgroundColor: 'rgba(253, 252, 251, 0.95)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(210, 195, 175, 0.3)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(196, 112, 48, 0.12)',
   },
   bottomNavButton: {
     paddingVertical: 8,

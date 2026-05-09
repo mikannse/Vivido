@@ -12,7 +12,7 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'video/x-m4v': 'm4v',
 };
 
-const getExtensionFromValue = (value?: string | null): string | null => {
+export const getExtensionFromValue = (value?: string | null): string | null => {
   if (!value) {
     return null;
   }

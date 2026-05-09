@@ -49,6 +49,7 @@ export const DiscoveryScreen: React.FC = () => {
     setSearchQuery,
     setTimeFilter,
     toggleTag,
+    clearTags,
     selectDate,
     setMonthFilter,
     clearFilters,
@@ -198,7 +199,7 @@ export const DiscoveryScreen: React.FC = () => {
               {selectedTags.length > 0 ? (
                 <TouchableOpacity
                   style={styles.filterPill}
-                  onPress={() => clearFilters()}
+                  onPress={() => clearTags()}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.filterPillText}>

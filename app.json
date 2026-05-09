@@ -2,7 +2,7 @@
   "expo": {
     "name": "Vivido",
     "slug": "Vivido",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icons.png",
     "userInterfaceStyle": "light",
@@ -32,7 +32,9 @@
       "expo-image",
       "expo-sharing",
       "expo-font",
-      "expo-build-properties"
+      "expo-build-properties",
+      "expo-audio",
+      "expo-video"
     ]
   }
 }

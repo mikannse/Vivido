@@ -42,3 +42,11 @@ yarn-error.*
 
 scripts/
 TODO.md
+
+# decompiled
+decompiled/
+
+backup_test/
+
+# Claude Code
+.claude/

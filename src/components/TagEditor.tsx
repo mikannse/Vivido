@@ -47,9 +47,12 @@ export const TagEditor: React.FC<TagEditorProps> = ({
     onTagsChange([...selectedTags, tag]);
   };
 
+  const MAX_TAG_LENGTH = 20;
+
   const handleCreateTag = async () => {
     const name = newTagName.trim();
     if (!name) return;
+    if (name.length > MAX_TAG_LENGTH) return;
 
     try {
       // Check if tag already exists
@@ -66,6 +69,11 @@ export const TagEditor: React.FC<TagEditorProps> = ({
     } catch (error) {
       console.error('Failed to create tag:', error);
     }
+  };
+
+  const handleRemoveSelectedTag = (tagId: string) => {
+    const newSelectedTags = selectedTags.filter((t) => t.id !== tagId);
+    onTagsChange(newSelectedTags);
   };
 
   const handleDeleteTag = async (tagId: string) => {
@@ -125,7 +133,7 @@ export const TagEditor: React.FC<TagEditorProps> = ({
             <TouchableOpacity
               key={tag.id}
               style={[styles.tag, { backgroundColor: tag.color + '20', borderColor: tag.color }]}
-              onPress={() => handleDeleteTag(tag.id)}
+              onPress={() => handleRemoveSelectedTag(tag.id)}
             >
               <Text style={[styles.tagText, { color: tag.color }]}>{tag.name}</Text>
               <Text style={[styles.removeIcon, { color: tag.color }]}>×</Text>
@@ -156,10 +164,17 @@ export const TagEditor: React.FC<TagEditorProps> = ({
   );
 };
 
+const PAPER_BG = '#f5f0e6';
+const TEXT_PRIMARY = '#3d2c1e';
+const TEXT_SECONDARY = '#7a6250';
+const TEXT_MUTED = '#a48a74';
+const BRAND_GOLD = '#c47030';
+
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
     paddingTop: 20,
+    backgroundColor: PAPER_BG,
   },
   header: {
     flexDirection: 'row',
@@ -170,12 +185,14 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#827066',
+    color: TEXT_SECONDARY,
+    fontFamily: 'LXGWWenKaiLite',
   },
   addButton: {
     fontSize: 14,
-    color: '#c47030',
+    color: BRAND_GOLD,
     fontWeight: '500',
+    fontFamily: 'LXGWWenKaiLite',
   },
   inputRow: {
     flexDirection: 'row',
@@ -184,15 +201,16 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: '#fdfcfb',
+    backgroundColor: 'rgba(253, 252, 251, 0.6)',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 0,
     height: 40,
     fontSize: 14,
-    color: '#3d2c1e',
+    color: TEXT_PRIMARY,
     borderWidth: 1,
-    borderColor: '#e2ddd8',
+    borderColor: 'rgba(196, 112, 48, 0.15)',
+    fontFamily: 'LXGWWenKaiLite',
   },
   createButton: {
     backgroundColor: '#c47030',
@@ -204,6 +222,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '500',
+    fontFamily: 'LXGWWenKaiLite',
   },
   tagsContainer: {
     flexDirection: 'row',
@@ -233,8 +252,9 @@ const styles = StyleSheet.create({
   },
   availableLabel: {
     fontSize: 12,
-    color: '#a89080',
+    color: TEXT_MUTED,
     marginBottom: 8,
+    fontFamily: 'LXGWWenKaiLite',
   },
   availableTag: {
     paddingHorizontal: 12,
