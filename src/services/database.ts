@@ -55,8 +55,42 @@ const ensureDraftTable = async (): Promise<void> => {
       date TEXT NOT NULL,
       media TEXT NOT NULL,
       tags TEXT NOT NULL,
-      updatedAt INTEGER NOT NULL
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY (diaryId) REFERENCES diaries(id) ON DELETE CASCADE
     );
+  `);
+
+  // SQLite cannot ALTER TABLE ADD FOREIGN KEY; migrate via table rebuild if needed
+  const fkList = await db.getAllAsync<{ table: string; from: string }>(
+    "PRAGMA foreign_key_list('drafts')"
+  );
+  const hasFk = fkList.some((fk) => fk.from === 'diaryId' && fk.table === 'diaries');
+
+  if (!hasFk) {
+    await db.execAsync(`
+      DELETE FROM drafts WHERE diaryId IS NOT NULL AND diaryId NOT IN (SELECT id FROM diaries);
+
+      CREATE TABLE drafts_new (
+        id TEXT PRIMARY KEY NOT NULL,
+        diaryId TEXT,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        date TEXT NOT NULL,
+        media TEXT NOT NULL,
+        tags TEXT NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        FOREIGN KEY (diaryId) REFERENCES diaries(id) ON DELETE CASCADE
+      );
+
+      INSERT INTO drafts_new SELECT * FROM drafts;
+      DROP TABLE drafts;
+      ALTER TABLE drafts_new RENAME TO drafts;
+    `);
+  }
+
+  await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_drafts_diaryId ON drafts(diaryId);
+    CREATE INDEX IF NOT EXISTS idx_drafts_updatedAt ON drafts(updatedAt DESC);
   `);
 };
 
