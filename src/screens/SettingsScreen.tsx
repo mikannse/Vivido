@@ -4,10 +4,12 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../types';
-import { BackupCancelledError, exportBackup, importBackup } from '../services/backup';
+import { BackupCancelledError, exportBackup, importBackup, estimateBackupSize, formatBytes, formatDuration, BackupEstimate } from '../services/backup';
 import { getAllDiaries } from '../services/database';
 import { APP_VERSION } from '../constants';
 import { StyledDialog } from '../components/StyledDialog';
+
+const LARGE_BACKUP_THRESHOLD_BYTES = 50 * 1024 * 1024;
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
 
@@ -23,21 +25,19 @@ export const SettingsScreen: React.FC = () => {
   const [importSuccessDialogVisible, setImportSuccessDialogVisible] = useState(false);
   const [importErrorDialogVisible, setImportErrorDialogVisible] = useState(false);
   const [importConfirmDialogVisible, setImportConfirmDialogVisible] = useState(false);
+  const [exportConfirmDialogVisible, setExportConfirmDialogVisible] = useState(false);
   const [lastExportResult, setLastExportResult] = useState({ diaryCount: 0, mediaCount: 0 });
   const [lastImportResult, setLastImportResult] = useState({ diaryCount: 0, mediaCount: 0 });
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number; stage: string } | null>(null);
   const [exportErrorMessage, setExportErrorMessage] = useState('');
+  const [exportEstimate, setExportEstimate] = useState<BackupEstimate | null>(null);
+  const [estimating, setEstimating] = useState(false);
 
-  const handleExport = async () => {
+  const proceedWithExport = async () => {
+    setExportConfirmDialogVisible(false);
+    setExportErrorMessage('');
     try {
-      const diaries = await getAllDiaries();
-      if (diaries.length === 0) {
-        setNoDiariesDialogVisible(true);
-        return;
-      }
-
       setExporting(true);
-      setExportErrorMessage('');
       const result = await exportBackup((current, total, stage) => {
         setExportProgress({ current, total, stage });
       });
@@ -45,8 +45,6 @@ export const SettingsScreen: React.FC = () => {
       setExportSuccessDialogVisible(true);
     } catch (error) {
       if (error instanceof BackupCancelledError) {
-        setExporting(false);
-        setExportProgress(null);
         return;
       }
 
@@ -56,6 +54,33 @@ export const SettingsScreen: React.FC = () => {
     } finally {
       setExporting(false);
       setExportProgress(null);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const diaries = await getAllDiaries();
+      if (diaries.length === 0) {
+        setNoDiariesDialogVisible(true);
+        return;
+      }
+
+      setEstimating(true);
+      const estimate = await estimateBackupSize();
+      setExportEstimate(estimate);
+      setEstimating(false);
+
+      if (estimate.mediaBytes >= LARGE_BACKUP_THRESHOLD_BYTES) {
+        setExportConfirmDialogVisible(true);
+        return;
+      }
+
+      await proceedWithExport();
+    } catch (error) {
+      setEstimating(false);
+      console.error('Estimate failed:', error);
+      setExportErrorMessage(error instanceof Error ? error.message : '估算失败');
+      setExportErrorDialogVisible(true);
     }
   };
 
@@ -99,7 +124,7 @@ export const SettingsScreen: React.FC = () => {
           <TouchableOpacity
             style={styles.item}
             onPress={handleExport}
-            disabled={exporting}
+            disabled={exporting || estimating}
             activeOpacity={0.7}
           >
             <View style={styles.itemLeft}>
@@ -108,7 +133,12 @@ export const SettingsScreen: React.FC = () => {
                 导出为 ZIP 文件，包含 JSON 和所有媒体文件
               </Text>
             </View>
-            {exporting ? (
+            {estimating ? (
+              <View style={styles.progressContainer}>
+                <ActivityIndicator size="small" color="#c47030" />
+                <Text style={styles.progressText}>正在估算大小...</Text>
+              </View>
+            ) : exporting ? (
               <View style={styles.progressContainer}>
                 <ActivityIndicator size="small" color="#c47030" />
                 {exportProgress && (
@@ -162,6 +192,25 @@ export const SettingsScreen: React.FC = () => {
         buttons={[{ text: '确定', style: 'default', onPress: () => setNoDiariesDialogVisible(false) }]}
         onDismiss={() => setNoDiariesDialogVisible(false)}
       />
+
+      {/* Large backup confirm dialog */}
+      {exportEstimate && (
+        <StyledDialog
+          visible={exportConfirmDialogVisible}
+          title="备份较大"
+          message={
+            `即将导出 ${exportEstimate.diaryCount} 篇日记和 ${exportEstimate.mediaCount} 个媒体文件。\n\n` +
+            `预估大小：${formatBytes(exportEstimate.mediaBytes)}\n` +
+            `预计耗时：${formatDuration(exportEstimate.estimatedDurationMs)}\n\n` +
+            `建议预留至少 ${formatBytes(Math.ceil(exportEstimate.mediaBytes * 1.5))} 的可用空间，导出过程中请保持应用在前台。`
+          }
+          buttons={[
+            { text: '取消', style: 'cancel', onPress: () => setExportConfirmDialogVisible(false) },
+            { text: '继续导出', style: 'default', onPress: proceedWithExport },
+          ]}
+          onDismiss={() => setExportConfirmDialogVisible(false)}
+        />
+      )}
 
       {/* Export success dialog */}
       <StyledDialog

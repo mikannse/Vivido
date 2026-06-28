@@ -1,6 +1,7 @@
 import {
   getInfoAsync,
   makeDirectoryAsync,
+  copyAsync,
   documentDirectory,
   cacheDirectory,
   readAsStringAsync,
@@ -9,8 +10,7 @@ import {
   readDirectoryAsync,
   deleteAsync,
 } from 'expo-file-system/legacy';
-import { File as FileHandle } from 'expo-file-system';
-import JSZip from 'jszip';
+import { zip, unzip } from 'react-native-zip-archive';
 import * as Sharing from 'expo-sharing';
 import { getDocumentAsync, DocumentPickerResult } from 'expo-document-picker';
 import { DiaryEntry, MediaItem, Tag } from '../types';
@@ -193,9 +193,11 @@ export const exportBackup = async (
     throw new Error('缓存目录不可用');
   }
 
-  const zip = new JSZip();
+  // Prepare a staging directory so the native ZIP engine can compress files
+  // in a single pass via file paths — no media bytes ever live in the JS heap.
+  const tempDir = `${cacheDirectory}backup-staging-${timestamp}/`;
+  const mediaStagingDir = `${tempDir}${BACKUP_MEDIA_FOLDER}/`;
 
-  // Add manifest JSON
   const manifestData: BackupManifest = {
     version: BACKUP_VERSION,
     schemaVersion: SCHEMA_VERSION,
@@ -234,9 +236,7 @@ export const exportBackup = async (
     })),
   };
 
-  zip.file(BACKUP_MANIFEST_NAME, JSON.stringify(manifestData, null, 2));
-
-  // Calculate total media files (including thumbnails) for progress
+  // Calculate total media items (including thumbnails) for progress
   let totalMediaItems = 0;
   for (const diary of diaries) {
     for (const media of diary.media) {
@@ -245,29 +245,29 @@ export const exportBackup = async (
     }
   }
 
-  // Add media files using binary reads to reduce memory overhead
   let mediaCount = 0;
   let processedCount = 0;
   const failedFiles: string[] = [];
+
+  await makeDirectoryAsync(mediaStagingDir, { intermediates: true });
 
   for (const diary of diaries) {
     for (const media of diary.media) {
       try {
         const ext = getMediaFileExtension(media);
         const fileName = `${media.id}.${ext}`;
+        const destPath = `${mediaStagingDir}${fileName}`;
 
-        const mediaFile = new FileHandle(media.uri);
-        const mediaBytes = await mediaFile.bytes();
-        zip.file(`${BACKUP_MEDIA_FOLDER}/${fileName}`, mediaBytes);
+        await copyAsync({ from: media.uri, to: destPath });
         processedCount += 1;
         onProgress?.(processedCount, totalMediaItems, fileName);
 
         if (media.thumbnail) {
-          const thumbFile = new FileHandle(media.thumbnail);
-          const thumbBytes = await thumbFile.bytes();
-          zip.file(`${BACKUP_MEDIA_FOLDER}/${media.id}_thumb.${ext}`, thumbBytes);
+          const thumbFileName = `${media.id}_thumb.${ext}`;
+          const thumbDestPath = `${mediaStagingDir}${thumbFileName}`;
+          await copyAsync({ from: media.thumbnail, to: thumbDestPath });
           processedCount += 1;
-          onProgress?.(processedCount, totalMediaItems, `${media.id}_thumb.${ext}`);
+          onProgress?.(processedCount, totalMediaItems, thumbFileName);
         }
         mediaCount += 1;
       } catch (err) {
@@ -278,18 +278,19 @@ export const exportBackup = async (
     }
   }
 
+  onProgress?.(processedCount, totalMediaItems, '正在写入 manifest...');
+  await writeAsStringAsync(
+    `${tempDir}${BACKUP_MANIFEST_NAME}`,
+    JSON.stringify(manifestData, null, 2)
+  );
+
   onProgress?.(processedCount, totalMediaItems, '正在生成压缩文件...');
-
-  // Generate ZIP file as Uint8Array to avoid base64 memory overhead
-  const zipContent = await zip.generateAsync({ type: 'uint8array' });
-
-  // Write ZIP to cache directory using modern File API
-  let zipPath: string | undefined;
+  const zipPath = `${cacheDirectory}${zipFileName}`;
 
   try {
-    zipPath = `${cacheDirectory}${zipFileName}`;
-    const outputFile = new FileHandle(zipPath);
-    await outputFile.write(zipContent);
+    // Native ZIP: streams files from staging dir into the archive without
+    // buffering their bytes in JS memory.
+    await zip(tempDir, zipPath);
 
     // Try to save to public Downloads using SAF (Storage Access Framework)
     try {
@@ -301,7 +302,6 @@ export const exportBackup = async (
           zipFileName,
           'application/zip'
         );
-        // Read cached file as base64 for SAF (legacy API requires base64)
         const zipBase64 = await readAsStringAsync(zipPath, { encoding: 'base64' });
         await StorageAccessFramework.writeAsStringAsync(fileUri, zipBase64, {
           encoding: 'base64',
@@ -330,14 +330,19 @@ export const exportBackup = async (
       mediaCount,
     };
   } catch (error) {
-    if (zipPath) {
-      try {
-        await deleteAsync(zipPath, { idempotent: true });
-      } catch {
-        // Ignore cleanup errors
-      }
+    try {
+      await deleteAsync(zipPath, { idempotent: true });
+    } catch {
+      // Ignore cleanup errors
     }
     throw error;
+  } finally {
+    // Always remove the staging directory, even on success.
+    try {
+      await deleteAsync(tempDir, { idempotent: true });
+    } catch (err) {
+      console.warn('Failed to clean up staging directory:', err);
+    }
   }
 };
 
@@ -359,157 +364,196 @@ export const importBackup = async (
 
   const zipFile = result.assets[0];
 
-  // Read ZIP file content as binary
-  const zipFileHandle = new FileHandle(zipFile.uri);
-  const zipContent = await zipFileHandle.bytes();
-
-  // Load ZIP
-  const zip = await JSZip.loadAsync(zipContent);
-
-  // Find and parse manifest
-  const manifestFile = zip.file(BACKUP_MANIFEST_NAME);
-  if (!manifestFile) {
-    throw new Error('Invalid backup: manifest not found');
+  if (!cacheDirectory) {
+    throw new Error('缓存目录不可用');
   }
 
-  const manifestContent = await manifestFile.async('string');
-  const manifest = parseBackupManifest(manifestContent);
-
-  // Validate schema version
-  if (manifest.schemaVersion > SCHEMA_VERSION) {
-    throw new BackupSchemaTooNewError(
-      `备份 schema 版本 (${manifest.schemaVersion}) 高于当前应用支持的版本 (${SCHEMA_VERSION})，请升级应用后重试`
-    );
-  }
-
-  // Validate app version (warn but don't block for older backups)
-  if (compareVersions(manifest.appVersion, APP_VERSION) > 0) {
-    throw new BackupAppVersionMismatchError(
-      `备份来自更新的应用版本 (${manifest.appVersion})，当前版本为 ${APP_VERSION}，请升级应用后重试`
-    );
-  }
-
-  const currentDiaries = await getAllDiaries();
-  const importedFiles: string[] = [];
-  let mediaCount = 0;
+  // Stage the ZIP into a real file path the native unzipper can read.
+  // Android's document picker returns `content://` URIs which the native
+  // ZIP engine cannot consume directly, so we copy them to the cache dir.
+  const stagingZipId = generateId();
+  const stagingZipPath = `${cacheDirectory}import-${stagingZipId}.zip`;
+  const tempDir = `${cacheDirectory}import-extract-${stagingZipId}/`;
+  let usedStagingZip = false;
 
   try {
-    const importedEntries: DiaryEntry[] = [];
-    const importedTags = new Map<string, Tag>();
-
-    // Import all tags from manifest
-    for (const tag of manifest.tags) {
-      importedTags.set(tag.id, tag);
+    if (zipFile.uri.startsWith('content://') || zipFile.uri.startsWith('file://') === false) {
+      await copyAsync({ from: zipFile.uri, to: stagingZipPath });
+      usedStagingZip = true;
     }
 
-    // Ensure media directory exists
-    const mediaDestDir = documentDirectory + 'media/';
-    const mediaDirInfo = await getInfoAsync(mediaDestDir);
-    if (!mediaDirInfo.exists) {
-      await makeDirectoryAsync(mediaDestDir, { intermediates: true });
+    await makeDirectoryAsync(tempDir, { intermediates: true });
+
+    // Native unzip: streams archive entries to disk without buffering
+    // their bytes in the JS heap.
+    const zipSource = usedStagingZip ? stagingZipPath : zipFile.uri;
+    await unzip(zipSource, tempDir);
+
+    // Find and parse manifest
+    const manifestPath = `${tempDir}${BACKUP_MANIFEST_NAME}`;
+    const manifestInfo = await getInfoAsync(manifestPath);
+    if (!manifestInfo.exists) {
+      throw new Error('Invalid backup: manifest not found');
+    }
+    const manifestContent = await readAsStringAsync(manifestPath);
+    const manifest = parseBackupManifest(manifestContent);
+
+    // Validate schema version
+    if (manifest.schemaVersion > SCHEMA_VERSION) {
+      throw new BackupSchemaTooNewError(
+        `备份 schema 版本 (${manifest.schemaVersion}) 高于当前应用支持的版本 (${SCHEMA_VERSION})，请升级应用后重试`
+      );
     }
 
-    // Calculate total media files for progress
-    let totalMediaItems = 0;
-    for (const diary of manifest.diaries) {
-      totalMediaItems += diary.media.length;
+    // Validate app version (warn but don't block for older backups)
+    if (compareVersions(manifest.appVersion, APP_VERSION) > 0) {
+      throw new BackupAppVersionMismatchError(
+        `备份来自更新的应用版本 (${manifest.appVersion})，当前版本为 ${APP_VERSION}，请升级应用后重试`
+      );
     }
-    let processedCount = 0;
 
-    // Import each diary
-    for (const diary of manifest.diaries) {
-      const importedMedia: MediaItem[] = [];
+    const currentDiaries = await getAllDiaries();
+    const importedFiles: string[] = [];
+    let mediaCount = 0;
 
-      for (const media of diary.media) {
-        const mediaFile = zip.file(media.relativePath);
-        if (!mediaFile) {
-          throw new Error(`Missing media file: ${media.relativePath}`);
+    try {
+      const importedEntries: DiaryEntry[] = [];
+      const importedTags = new Map<string, Tag>();
+
+      // Import all tags from manifest
+      for (const tag of manifest.tags) {
+        importedTags.set(tag.id, tag);
+      }
+
+      // Ensure media directory exists
+      const mediaDestDir = documentDirectory + 'media/';
+      const mediaDirInfo = await getInfoAsync(mediaDestDir);
+      if (!mediaDirInfo.exists) {
+        await makeDirectoryAsync(mediaDestDir, { intermediates: true });
+      }
+
+      // Calculate total media files for progress
+      let totalMediaItems = 0;
+      for (const diary of manifest.diaries) {
+        totalMediaItems += diary.media.length;
+      }
+      let processedCount = 0;
+
+      // Import each diary
+      for (const diary of manifest.diaries) {
+        const importedMedia: MediaItem[] = [];
+
+        for (const media of diary.media) {
+          // Strip the leading "media/" to recover the archive entry name
+          const entryName = media.relativePath.startsWith(`${BACKUP_MEDIA_FOLDER}/`)
+            ? media.relativePath.slice(BACKUP_MEDIA_FOLDER.length + 1)
+            : media.relativePath;
+          const sourcePath = `${tempDir}${BACKUP_MEDIA_FOLDER}/${entryName}`;
+
+          const sourceInfo = await getInfoAsync(sourcePath);
+          if (!sourceInfo.exists) {
+            throw new Error(`Missing media file: ${media.relativePath}`);
+          }
+
+          // Generate new filename to avoid conflicts
+          const ext = getExtensionFromValue(entryName) ?? (media.type === 'video' ? 'mp4' : 'jpg');
+          const newFileName = `${generateId()}.${ext}`;
+          const destPath = `${mediaDestDir}${newFileName}`;
+
+          await copyAsync({ from: sourcePath, to: destPath });
+          importedFiles.push(destPath);
+
+          let thumbnailUri: string | undefined;
+          if (media.thumbnailRelativePath) {
+            const thumbEntryName = media.thumbnailRelativePath.startsWith(`${BACKUP_MEDIA_FOLDER}/`)
+              ? media.thumbnailRelativePath.slice(BACKUP_MEDIA_FOLDER.length + 1)
+              : media.thumbnailRelativePath;
+            const thumbSourcePath = `${tempDir}${BACKUP_MEDIA_FOLDER}/${thumbEntryName}`;
+            const thumbInfo = await getInfoAsync(thumbSourcePath);
+            if (thumbInfo.exists) {
+              const thumbFileName = `${generateId()}_thumb.jpg`;
+              thumbnailUri = `${mediaDestDir}${thumbFileName}`;
+              await copyAsync({ from: thumbSourcePath, to: thumbnailUri });
+              importedFiles.push(thumbnailUri);
+            }
+          }
+
+          importedMedia.push({
+            id: media.id,
+            type: media.type,
+            uri: destPath,
+            thumbnail: thumbnailUri,
+            position: media.position,
+          });
+          mediaCount += 1;
+          processedCount += 1;
+          onProgress?.(processedCount, totalMediaItems, newFileName);
         }
 
-        // Generate new filename to avoid conflicts
-        const ext = getExtensionFromValue(media.relativePath) ?? (media.type === 'video' ? 'mp4' : 'jpg');
-        const newFileName = `${generateId()}.${ext}`;
-        const destPath = `${mediaDestDir}${newFileName}`;
+        // Collect tags from this diary
+        const diaryTags = (diary.tags || []).map((tag) => {
+          if (!importedTags.has(tag.id)) {
+            importedTags.set(tag.id, tag);
+          }
+          return tag;
+        });
 
-        // Extract and save media file using binary data
-        const mediaData = await mediaFile.async('uint8array');
-        const destFile = new FileHandle(destPath);
-        await destFile.write(mediaData);
-        importedFiles.push(destPath);
+        importedEntries.push({
+          id: diary.id,
+          title: diary.title,
+          content: diary.content,
+          createdAt: diary.createdAt,
+          updatedAt: diary.updatedAt,
+          media: importedMedia,
+          tags: diaryTags,
+        });
+      }
 
-        let thumbnailUri: string | undefined;
-        if (media.thumbnailRelativePath) {
-          const thumbFile = zip.file(media.thumbnailRelativePath);
-          if (thumbFile) {
-            const thumbFileName = `${generateId()}_thumb.jpg`;
-            thumbnailUri = `${mediaDestDir}${thumbFileName}`;
-            const thumbData = await thumbFile.async('uint8array');
-            const thumbDestFile = new FileHandle(thumbnailUri);
-            await thumbDestFile.write(thumbData);
-            importedFiles.push(thumbnailUri);
+      // Replace all data in database
+      await replaceAllData(importedEntries, Array.from(importedTags.values()));
+    } catch (error) {
+      // Clean up imported files on error (only when import itself failed)
+      for (const uri of importedFiles) {
+        await deleteMedia(uri);
+      }
+      throw error;
+    }
+
+    // After successful database replacement, delete old media files separately.
+    // Old media deletion failures must NOT trigger cleanup of newly imported files.
+    try {
+      for (const diary of currentDiaries) {
+        for (const media of diary.media) {
+          await deleteMedia(media.uri);
+          if (media.thumbnail) {
+            await deleteMedia(media.thumbnail);
           }
         }
-
-        importedMedia.push({
-          id: media.id,
-          type: media.type,
-          uri: destPath,
-          thumbnail: thumbnailUri,
-          position: media.position,
-        });
-        mediaCount += 1;
-        processedCount += 1;
-        onProgress?.(processedCount, totalMediaItems, newFileName);
       }
-
-      // Collect tags from this diary
-      const diaryTags = (diary.tags || []).map((tag) => {
-        if (!importedTags.has(tag.id)) {
-          importedTags.set(tag.id, tag);
-        }
-        return tag;
-      });
-
-      importedEntries.push({
-        id: diary.id,
-        title: diary.title,
-        content: diary.content,
-        createdAt: diary.createdAt,
-        updatedAt: diary.updatedAt,
-        media: importedMedia,
-        tags: diaryTags,
-      });
+    } catch (err) {
+      console.warn('Failed to delete old media files after import:', err);
     }
 
-    // Replace all data in database
-    await replaceAllData(importedEntries, Array.from(importedTags.values()));
-  } catch (error) {
-    // Clean up imported files on error (only when import itself failed)
-    for (const uri of importedFiles) {
-      await deleteMedia(uri);
+    return {
+      diaryCount: manifest.diaries.length,
+      mediaCount,
+    };
+  } finally {
+    // Always remove the extraction directory and any staging copy of the
+    // archive, even on failure. Cleanup errors are logged, not raised.
+    try {
+      await deleteAsync(tempDir, { idempotent: true });
+    } catch (err) {
+      console.warn('Failed to clean up extraction directory:', err);
     }
-    throw error;
-  }
-
-  // After successful database replacement, delete old media files separately.
-  // Old media deletion failures must NOT trigger cleanup of newly imported files.
-  try {
-    for (const diary of currentDiaries) {
-      for (const media of diary.media) {
-        await deleteMedia(media.uri);
-        if (media.thumbnail) {
-          await deleteMedia(media.thumbnail);
-        }
+    if (usedStagingZip) {
+      try {
+        await deleteAsync(stagingZipPath, { idempotent: true });
+      } catch (err) {
+        console.warn('Failed to clean up staging ZIP:', err);
       }
     }
-  } catch (err) {
-    console.warn('Failed to delete old media files after import:', err);
   }
-
-  return {
-    diaryCount: manifest.diaries.length,
-    mediaCount,
-  };
 };
 
 export const cleanupOldBackups = async (keepCount: number = 5): Promise<number> => {
@@ -530,4 +574,74 @@ export const cleanupOldBackups = async (keepCount: number = 5): Promise<number> 
   } catch {
     return 0;
   }
+};
+
+export interface BackupEstimate {
+  mediaBytes: number;
+  mediaCount: number;
+  diaryCount: number;
+  estimatedDurationMs: number;
+}
+
+// Conservative throughput for the copy + native zip pipeline on mid-range
+// devices. Real numbers vary with storage speed and CPU, but 5 MB/s gives a
+// pessimistic upper bound so the UI never under-promises.
+const ESTIMATED_BYTES_PER_SECOND = 5 * 1024 * 1024;
+
+export const estimateBackupSize = async (): Promise<BackupEstimate> => {
+  const diaries = await getAllDiaries();
+
+  let mediaBytes = 0;
+  let mediaCount = 0;
+
+  for (const diary of diaries) {
+    for (const media of diary.media) {
+      mediaCount += 1;
+      try {
+        const info = await getInfoAsync(media.uri);
+        if (info.exists && typeof info.size === 'number') {
+          mediaBytes += info.size;
+        }
+      } catch {
+        // Treat unreadable entries as zero contribution
+      }
+      if (media.thumbnail) {
+        try {
+          const thumbInfo = await getInfoAsync(media.thumbnail);
+          if (thumbInfo.exists && typeof thumbInfo.size === 'number') {
+            mediaBytes += thumbInfo.size;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  const estimatedDurationMs = mediaBytes > 0
+    ? Math.ceil((mediaBytes / ESTIMATED_BYTES_PER_SECOND) * 1000)
+    : 0;
+
+  return {
+    mediaBytes,
+    mediaCount,
+    diaryCount: diaries.length,
+    estimatedDurationMs,
+  };
+};
+
+export const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+};
+
+export const formatDuration = (ms: number): string => {
+  if (ms <= 0) return '几秒';
+  const totalSeconds = Math.ceil(ms / 1000);
+  if (totalSeconds < 60) return `约 ${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds === 0 ? `约 ${minutes} 分钟` : `约 ${minutes} 分 ${seconds} 秒`;
 };
