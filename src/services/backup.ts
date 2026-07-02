@@ -6,7 +6,6 @@ import {
   cacheDirectory,
   readAsStringAsync,
   writeAsStringAsync,
-  StorageAccessFramework,
   readDirectoryAsync,
   deleteAsync,
 } from 'expo-file-system/legacy';
@@ -292,26 +291,14 @@ export const exportBackup = async (
     // buffering their bytes in JS memory.
     await zip(tempDir, zipPath);
 
-    // Try to save to public Downloads using SAF (Storage Access Framework)
-    try {
-      const permissions = await StorageAccessFramework.requestDirectoryPermissionsAsync();
-      if (permissions.granted) {
-        const dirUri = permissions.directoryUri;
-        const fileUri = await StorageAccessFramework.createFileAsync(
-          dirUri,
-          zipFileName,
-          'application/zip'
-        );
-        const zipBase64 = await readAsStringAsync(zipPath, { encoding: 'base64' });
-        await StorageAccessFramework.writeAsStringAsync(fileUri, zipBase64, {
-          encoding: 'base64',
-        });
-      }
-    } catch (err) {
-      console.warn('Failed to save via SAF:', err);
+    // Validate that the ZIP file was actually written (detects empty/corrupt output)
+    const zipInfo = await getInfoAsync(zipPath);
+    if (!zipInfo.exists || (typeof zipInfo.size === 'number' && zipInfo.size === 0)) {
+      throw new Error('ZIP 文件生成失败（0 字节），请检查存储空间是否充足');
     }
 
-    // Share the ZIP file
+    // Share the ZIP file — on both iOS and Android the share sheet offers
+    // "Save to Files" / "Save to Downloads", making a separate SAF flow redundant.
     const isAvailable = await Sharing.isAvailableAsync();
     if (isAvailable) {
       await Sharing.shareAsync(zipPath, {

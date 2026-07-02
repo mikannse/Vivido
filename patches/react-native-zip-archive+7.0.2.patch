@@ -1,0 +1,29 @@
+diff --git a/node_modules/react-native-zip-archive/android/src/main/java/com/rnziparchive/RNZipArchiveModule.java b/node_modules/react-native-zip-archive/android/src/main/java/com/rnziparchive/RNZipArchiveModule.java
+index 54f1955..9a5f508 100644
+--- a/node_modules/react-native-zip-archive/android/src/main/java/com/rnziparchive/RNZipArchiveModule.java
++++ b/node_modules/react-native-zip-archive/android/src/main/java/com/rnziparchive/RNZipArchiveModule.java
+@@ -369,8 +369,8 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
+     new Thread(new Runnable() {
+       @Override
+       public void run() {
++        net.lingala.zip4j.ZipFile zipFile = null;
+         try {
+-          net.lingala.zip4j.ZipFile zipFile;
+           if (password != null) {
+             zipFile = new net.lingala.zip4j.ZipFile(destFile, password);
+           } else {
+@@ -419,6 +419,14 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
+         } catch (Exception ex) {
+           promise.reject(null, ex.getMessage());
+           return;
++        } finally {
++          if (zipFile != null) {
++            try {
++              zipFile.close();
++            } catch (IOException e) {
++              Log.w(TAG, "Failed to close zip file: " + e.getMessage());
++            }
++          }
+         }
+       }
+     }).start();
