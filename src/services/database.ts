@@ -304,11 +304,13 @@ export const getAllDiaries = async (): Promise<DiaryEntry[]> => {
 };
 
 // Paginated diary loading for better performance
-// Uses LIMIT 3 media per diary since TimelineCard only displays up to 3 images
+// Uses a cap per diary to bound the result set. Increased from 3 to 10 to
+// prevent audio attachments from being silently dropped when a diary has
+// >=3 visual media items plus audio (see #2).
 export const getDiariesPaginated = async (
   limit: number,
   offset: number,
-  mediaLimitPerDiary: number = 3
+  mediaLimitPerDiary: number = 10
 ): Promise<{ diaries: DiaryEntry[]; total: number }> => {
   if (!db) throw new Error('Database not initialized');
 
@@ -530,27 +532,41 @@ export const getWordFrequency = async (
   months: number = 1,
   query: string = '',
   tagIds: string[] = [],
-  timeFilter: TimeFilter = 'all',
-  selectedDate?: string | null,
-  monthFilter?: MonthFilter | null
+  _timeFilter: TimeFilter = 'all',
+  _selectedDate?: string | null,
+  _monthFilter?: MonthFilter | null
 ): Promise<Map<string, number>> => {
   if (!db) throw new Error('Database not initialized');
 
-  const startDate = new Date();
-  startDate.setMonth(startDate.getMonth() - months);
+  // 词云始终限制近 30 天，不受当前时间筛选器影响（决策 2026-07-08）。
+  // 独立构建 WHERE 子句：只复用搜索词和标签筛选，不继承用户时间/日期/月份筛选器（#6）。
+  // 用 Date.now() - 30 天避免 setMonth 跨月回滚问题（#7）。
+  const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   startDate.setHours(0, 0, 0, 0);
-  const { whereSql, params } = buildDiscoveryWhereClause(
-    query,
-    tagIds,
-    timeFilter,
-    selectedDate,
-    monthFilter
-  );
 
-  const shouldApplyRecentWindow = timeFilter === 'all' && !selectedDate && !monthFilter;
+  let whereSql = ' WHERE 1=1';
+  const params: (string | number)[] = [];
+
+  if (query.trim()) {
+    whereSql += ' AND (title LIKE ? OR content LIKE ?)';
+    const searchTerm = `%${query.trim()}%`;
+    params.push(searchTerm, searchTerm);
+  }
+
+  if (tagIds.length > 0) {
+    whereSql += ` AND EXISTS (
+      SELECT 1 FROM diary_tags dt
+      WHERE dt.diaryId = diaries.id AND dt.tagId IN (${tagIds.map(() => '?').join(',')})
+    )`;
+    params.push(...tagIds);
+  }
+
+  whereSql += ' AND createdAt >= ?';
+  params.push(startDate.getTime());
+
   const diaries = await db.getAllAsync<{ content: string }>(
-    `SELECT content FROM diaries${whereSql}${shouldApplyRecentWindow ? ' AND createdAt >= ?' : ''}`,
-    shouldApplyRecentWindow ? [...params, startDate.getTime()] : params
+    `SELECT content FROM diaries${whereSql}`,
+    params
   );
 
   // 分词/词频启发式收敛在 utils/wordcloud（零依赖、无 AI），不外溢到组件
@@ -624,37 +640,6 @@ export const deleteDiary = async (id: string): Promise<void> => {
     await db!.runAsync('DELETE FROM diary_tags WHERE diaryId = ?', [id]);
     await db!.runAsync('DELETE FROM media WHERE diaryId = ?', [id]);
     await db!.runAsync('DELETE FROM diaries WHERE id = ?', [id]);
-  });
-};
-
-export const replaceAllDiaries = async (entries: DiaryEntry[]): Promise<void> => {
-  if (!db) throw new Error('Database not initialized');
-
-  await db.withTransactionAsync(async () => {
-    await db!.runAsync('DELETE FROM diary_tags');
-    await db!.runAsync('DELETE FROM media');
-    await db!.runAsync('DELETE FROM diaries');
-
-    for (const entry of entries) {
-      await db!.runAsync(
-        'INSERT INTO diaries (id, title, content, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
-        [entry.id, entry.title, entry.content, entry.createdAt, entry.updatedAt]
-      );
-
-      for (const media of entry.media) {
-        await db!.runAsync(
-          'INSERT INTO media (id, diaryId, type, uri, thumbnail, position) VALUES (?, ?, ?, ?, ?, ?)',
-          [media.id, entry.id, media.type, media.uri, media.thumbnail || null, media.position ?? 0]
-        );
-      }
-
-      for (const tag of entry.tags) {
-        await db!.runAsync(
-          'INSERT OR IGNORE INTO diary_tags (diaryId, tagId) VALUES (?, ?)',
-          [entry.id, tag.id]
-        );
-      }
-    }
   });
 };
 

@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import { MediaItem, Tag } from '../types';
 import { getOrderedMedia } from '../utils/media';
 import { VideoPoster } from './VideoPoster';
-import { colors, typography } from '../theme';
+import { colors, typography, alpha } from '../theme';
 
 interface CarouselCardProps {
   diary: {
@@ -36,6 +36,10 @@ export const CarouselCard: React.FC<CarouselCardProps> = ({ diary, width, onPres
   const orderedMedia = getOrderedMedia(diary.media);
   const cover = orderedMedia[0];
   const isVideoCover = cover?.type === 'video';
+  const isAudioCover = cover?.type === 'audio';
+  // 安全取内容预览：content 可能为 null，先回退为空字符串
+  // 无媒体时取正文第一行（按换行符截取），不限字数
+  const contentPreview = (diary.content ?? '').split('\n')[0] || '无内容';
 
   return (
     <View style={[styles.wrapper, { width }]}>
@@ -49,13 +53,18 @@ export const CarouselCard: React.FC<CarouselCardProps> = ({ diary, width, onPres
                 enableGeneratedThumbnail
                 style={styles.media}
               />
+            ) : isAudioCover ? (
+              <View style={styles.mediaPlaceholder}>
+                <Text style={styles.audioIcon}>♪</Text>
+                <Text style={styles.audioLabel}>语音附件</Text>
+              </View>
             ) : (
               <Image source={{ uri: cover.uri }} style={styles.media} contentFit="cover" />
             )
           ) : (
             <View style={styles.mediaPlaceholder}>
               <Text style={styles.placeholderText}>
-                {diary.content.slice(0, 40) || '无内容'}
+                {contentPreview}
               </Text>
             </View>
           )}
@@ -99,6 +108,7 @@ const styles = StyleSheet.create({
   wrapper: {
     paddingHorizontal: 16,
     paddingVertical: 8,
+    height: '100%',
   },
   card: {
     flex: 1,
@@ -106,7 +116,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(210, 195, 175, 0.35)',
+    borderColor: alpha(colors.border, 0.35),
     shadowColor: colors.text,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.1,
@@ -137,11 +147,21 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     textAlign: 'center',
   },
+  audioIcon: {
+    fontSize: 48,
+    color: colors.primary,
+    marginBottom: 8,
+  },
+  audioLabel: {
+    ...typography.body,
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
   countBadge: {
     position: 'absolute',
     top: 14,
     right: 14,
-    backgroundColor: 'rgba(61, 44, 30, 0.55)',
+    backgroundColor: alpha(colors.text, 0.55),
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -187,7 +207,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 999,
-    backgroundColor: 'rgba(196, 112, 48, 0.08)',
+    backgroundColor: alpha(colors.primary, 0.08),
   },
   tagDot: {
     width: 7,

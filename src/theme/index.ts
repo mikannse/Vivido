@@ -26,3 +26,14 @@ export const colors = {
   textTertiary: '#a89080',
   border: '#e2ddd8',
 };
+
+/**
+ * 将十六进制颜色转换为 rgba 字符串，用于需要 alpha 透明度的场景。
+ * 用法示例：`backgroundColor: alpha(colors.primary, 0.08)`
+ */
+export const alpha = (hex: string, opacity: number): string => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+};

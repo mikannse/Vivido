@@ -641,11 +641,12 @@ export const EditorScreen: React.FC = () => {
         onCancel={() => setShowDatePicker(false)}
       />
 
-      <AudioRecorder
-        visible={showAudioRecorder}
-        onClose={() => setShowAudioRecorder(false)}
-        onRecorded={handleAudioRecorded}
-      />
+      {showAudioRecorder && (
+        <AudioRecorder
+          onClose={() => setShowAudioRecorder(false)}
+          onRecorded={handleAudioRecorded}
+        />
+      )}
     </SafeAreaView>
   );
 };

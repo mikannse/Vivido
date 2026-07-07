@@ -47,6 +47,7 @@ export const useDiscovery = (): UseDiscoveryReturn => {
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
+  const fetchIdRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -70,6 +71,7 @@ export const useDiscovery = (): UseDiscoveryReturn => {
   }, [searchQuery]);
 
   const fetchData = useCallback(async () => {
+    const fetchId = ++fetchIdRef.current;
     if (!isMountedRef.current) return;
     setIsLoading(true);
     setError(null);
@@ -81,13 +83,16 @@ export const useDiscovery = (): UseDiscoveryReturn => {
         getWordFrequency(1, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
       ]);
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || fetchId !== fetchIdRef.current) return;
 
       setDiaries(diariesResult);
       setTags(tagsResult);
 
       // Convert word frequency to WordFrequency with levels
+      // 最低频次门槛 2：过滤只出现一次的噪声碎片词（#10）。
+      const MIN_FREQ = 2;
       const sortedWords = Array.from(wordFreqResult.entries())
+        .filter(([, count]) => count >= MIN_FREQ)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10);
 
@@ -104,11 +109,11 @@ export const useDiscovery = (): UseDiscoveryReturn => {
       setWordCloudData(wordCloud);
     } catch (err) {
       console.error('Failed to fetch discovery data:', err);
-      if (isMountedRef.current) {
+      if (isMountedRef.current && fetchId === fetchIdRef.current) {
         setError('加载数据失败');
       }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && fetchId === fetchIdRef.current) {
         setIsLoading(false);
       }
     }

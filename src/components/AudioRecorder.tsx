@@ -1,18 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ActivityIndicator } from 'react-native';
 import {
-  useAudioRecorder,
-  useAudioRecorderState,
+  AudioModule,
   RecordingPresets,
   setAudioModeAsync,
   getRecordingPermissionsAsync,
   requestRecordingPermissionsAsync,
 } from 'expo-audio';
+import type { RecorderState } from 'expo-audio';
 import { getInfoAsync } from 'expo-file-system/legacy';
-import { colors, typography } from '../theme';
+import { colors, typography, alpha } from '../theme';
+
+// 绕过 useAudioRecorder（它在渲染阶段通过 useReleasingSharedObject
+// 创建原生对象，在 Android 上可能导致 "shared object already released" 崩溃）。
+// 改为手动管理 AudioRecorder 生命周期，在 useEffect 中创建/释放。
+// AudioModule 从 'expo-audio' 公开导出（非内部 build 路径）。
 
 interface AudioRecorderProps {
-  visible: boolean;
   onClose: () => void;
   onRecorded: (uri: string) => void;
 }
@@ -29,19 +33,113 @@ const formatDuration = (millis: number): string => {
 
 /**
  * 语音录制入口（ADR-2 / Story 4.1）。
- * 复用 expo-audio 的 useAudioRecorder，产出 .m4a 临时文件；
+ * 复用 expo-audio 底层 AudioRecorder，产出 .m4a 临时文件；
  * 由父组件经 storage.saveMedia 落盘，继承现有媒体管道。
  */
-export const AudioRecorder: React.FC<AudioRecorderProps> = ({ visible, onClose, onRecorded }) => {
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder);
+export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onClose, onRecorded }) => {
+  // 用 ref 持有 recorder 实例，避免渲染阶段创建原生对象
+  const recorderRef = useRef<any>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [durationMillis, setDurationMillis] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [initFailed, setInitFailed] = useState(false);
 
-  const isRecording = recorderState.isRecording;
-  const durationMillis = recorderState.durationMillis ?? 0;
+  // 挂载后创建原生 AudioRecorder（在 effect 中而非渲染阶段，避免 JSI 同步调用问题）
+  useEffect(() => {
+    if (!AudioModule?.AudioRecorder) {
+      setInitFailed(true);
+      return;
+    }
+
+    let recorder: any = null;
+    try {
+      // RecordingPresets.HIGH_QUALITY 在 Android 上的默认选项
+      recorder = new AudioModule.AudioRecorder({
+        extension: '.m4a',
+        sampleRate: 44100,
+        numberOfChannels: 1,
+        bitRate: 128000,
+        isMeteringEnabled: false,
+        android: {
+          outputFormat: 'mpeg4',
+          audioEncoder: 'aac',
+        },
+      });
+      recorderRef.current = recorder;
+    } catch (e) {
+      console.warn('Failed to create AudioRecorder:', e);
+      setInitFailed(true);
+      return;
+    }
+
+    return () => {
+      // 组件卸载时释放原生对象。
+      // 注意：stop() 返回 Promise<void>，必须 await 后再 release()，
+      // 否则 release() 可能在 stop() 完成前执行 -> 原生竞争崩溃（#1）。
+      (async () => {
+        try {
+          if (recorder.isRecording) {
+            await recorder.stop();
+          }
+        } catch {
+          // ignore
+        }
+        try {
+          recorder.release();
+        } catch {
+          // ignore
+        }
+        recorderRef.current = null;
+      })();
+    };
+  }, []);
+
+  // 轮询录音状态（在 effect 中调用 getStatus()，避免渲染阶段同步 JSI）。
+  // 录音停止后自动停止轮询以节省 JSI 调用（#14）。
+  useEffect(() => {
+    let active = true;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const poll = () => {
+      if (!active) return;
+      const recorder = recorderRef.current;
+      if (!recorder) return;
+      try {
+        const status: RecorderState = recorder.getStatus();
+        if (active) {
+          setIsRecording(status.isRecording);
+          setDurationMillis(status.durationMillis);
+          // 录音已停止 -> 停止轮询
+          if (!status.isRecording && intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+        }
+      } catch {
+        // 原生对象可能暂不可用，忽略本次轮询
+      }
+    };
+
+    // 首次快速轮询（200ms）以尽快获取录音器状态
+    const initialTimer = setTimeout(() => {
+      poll();
+      if (active) {
+        intervalId = setInterval(poll, 500);
+      }
+    }, 200);
+
+    return () => {
+      active = false;
+      clearTimeout(initialTimer);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, []);
 
   const startRecording = useCallback(async () => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+
     setPermissionDenied(false);
     setBusy(true);
     try {
@@ -57,29 +155,28 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ visible, onClose, 
 
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
-      recorder.record();
+      await recorder.record();
     } catch (error) {
       console.warn('Failed to start recording:', error);
     } finally {
       setBusy(false);
     }
-  }, [recorder]);
+  }, []);
 
-  // 打开时自动开始录音，缩短动笔摩擦
+  // 组件挂载时自动开始录音，关闭时若仍在录音则中止（不保存）
   useEffect(() => {
-    if (visible) {
+    if (initFailed) return;
+    // 延迟一小段时间确保原生对象已就绪
+    const timer = setTimeout(() => {
       startRecording();
-    }
-    // 关闭时若仍在录音则中止（不保存）
-    return () => {
-      if (recorder.isRecording) {
-        recorder.stop().catch(() => undefined);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [initFailed, startRecording]);
 
   const finalizeRecording = async (): Promise<string | null> => {
+    const recorder = recorderRef.current;
+    if (!recorder) return null;
+
     try {
       await recorder.stop();
     } catch (error) {
@@ -90,8 +187,16 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ visible, onClose, 
     const uri = recorder.uri;
     if (!uri) return null;
 
-    // E1：时长过短视为空录音，丢弃
-    if (durationMillis > 0 && durationMillis < MIN_DURATION_MS) {
+    // E1：用时长的 final 状态而非轮询 stale 状态判断（#5）。
+    // 轮询每 500ms 更新一次 duration state，stop() 后直接从 native 对象读精确值。
+    let finalDuration: number = 0;
+    try {
+      const status = recorder.getStatus();
+      finalDuration = status.durationMillis ?? 0;
+    } catch {
+      finalDuration = durationMillis; // fallback 到轮询值
+    }
+    if (finalDuration > 0 && finalDuration < MIN_DURATION_MS) {
       return null;
     }
 
@@ -117,7 +222,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ visible, onClose, 
   };
 
   const handleCancel = async () => {
-    if (recorder.isRecording) {
+    const recorder = recorderRef.current;
+    if (recorder?.isRecording) {
       try {
         await recorder.stop();
       } catch {
@@ -128,10 +234,20 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ visible, onClose, 
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCancel}>
+    <Modal visible transparent animationType="fade" onRequestClose={handleCancel}>
       <View style={styles.overlay}>
         <View style={styles.sheet}>
-          {permissionDenied ? (
+          {initFailed ? (
+            <>
+              <Text style={styles.title}>录音不可用</Text>
+              <Text style={styles.hint}>
+                当前设备不支持语音录制功能。
+              </Text>
+              <TouchableOpacity style={styles.primaryButton} onPress={handleCancel}>
+                <Text style={styles.primaryButtonText}>知道了</Text>
+              </TouchableOpacity>
+            </>
+          ) : permissionDenied ? (
             <>
               <Text style={styles.title}>需要麦克风权限</Text>
               <Text style={styles.hint}>
@@ -179,7 +295,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ visible, onClose, 
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: alpha(colors.text, 0.5),
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -200,7 +316,7 @@ const styles = StyleSheet.create({
     width: 88,
     height: 88,
     borderRadius: 44,
-    backgroundColor: 'rgba(196, 112, 48, 0.08)',
+    backgroundColor: alpha(colors.primary, 0.08),
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,

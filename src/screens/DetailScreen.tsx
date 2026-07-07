@@ -313,27 +313,6 @@ export const DetailScreen: React.FC = () => {
                   </View>
                 ) : null}
 
-                {/* Audio attachments */}
-                {audioMedia.length > 0 && (
-                  <View style={styles.audioSection}>
-                    {audioMedia.map((item) => (
-                      <AudioPlayer key={item.id} uri={item.uri} />
-                    ))}
-                  </View>
-                )}
-
-                {/* Tags */}
-                {diary.tags.length > 0 && (
-                  <View style={styles.tagRow}>
-                    {diary.tags.map((tag) => (
-                      <View key={tag.id} style={styles.tagPill}>
-                        <View style={[styles.tagDot, { backgroundColor: tag.color }]} />
-                        <Text style={styles.tagText}>{tag.name}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
                 {/* Watermark */}
                 <VividoWatermark />
 
@@ -352,28 +331,28 @@ export const DetailScreen: React.FC = () => {
                 {diary.content ? (
                   <Text style={styles.quickContent}>{diary.content}</Text>
                 ) : null}
-
-                {/* Audio attachments */}
-                {audioMedia.length > 0 && (
-                  <View style={styles.audioSection}>
-                    {audioMedia.map((item) => (
-                      <AudioPlayer key={item.id} uri={item.uri} compact />
-                    ))}
-                  </View>
-                )}
-
-                {/* Tags */}
-                {diary.tags.length > 0 && (
-                  <View style={styles.tagRow}>
-                    {diary.tags.map((tag) => (
-                      <View key={tag.id} style={styles.tagPill}>
-                        <View style={[styles.tagDot, { backgroundColor: tag.color }]} />
-                        <Text style={styles.tagText}>{tag.name}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
               </>
+            )}
+
+            {/* Shared: Audio attachments (两模式共享，仅 compact 属性不同) */}
+            {audioMedia.length > 0 && (
+              <View style={styles.audioSection}>
+                {audioMedia.map((item) => (
+                  <AudioPlayer key={item.id} uri={item.uri} compact={mode !== 'refined'} />
+                ))}
+              </View>
+            )}
+
+            {/* Shared: Tags (两模式完全一致) */}
+            {diary.tags.length > 0 && (
+              <View style={styles.tagRow}>
+                {diary.tags.map((tag) => (
+                  <View key={tag.id} style={styles.tagPill}>
+                    <View style={[styles.tagDot, { backgroundColor: tag.color }]} />
+                    <Text style={styles.tagText}>{tag.name}</Text>
+                  </View>
+                ))}
+              </View>
             )}
 
             {/* Navigation buttons at bottom */}
