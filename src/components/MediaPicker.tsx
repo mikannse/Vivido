@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { MediaItem } from '../types';
 import { assignMediaPositions } from '../utils/media';
 import { VideoPoster } from './VideoPoster';
+import { AudioPlayer } from './AudioPlayer';
 
 interface MediaPickerProps {
   media: MediaItem[];
@@ -15,15 +16,18 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ media, onMediaChange }
     onMediaChange(assignMediaPositions(media.filter((m) => m.id !== id)));
   };
 
+  const audioItems = media.filter((m) => m.type === 'audio');
+  const visualItems = media.filter((m) => m.type !== 'audio');
+
   return (
     <View style={styles.container}>
-      {media.length > 0 && (
+      {visualItems.length > 0 && (
         <ScrollView
           horizontal
           style={styles.mediaList}
           showsHorizontalScrollIndicator={false}
         >
-          {media.map((item) => (
+          {visualItems.map((item) => (
             <View key={item.id} style={styles.mediaItem}>
               {item.type === 'image' ? (
                 <Image
@@ -53,6 +57,18 @@ export const MediaPicker: React.FC<MediaPickerProps> = ({ media, onMediaChange }
           ))}
         </ScrollView>
       )}
+
+      {audioItems.length > 0 && (
+        <View style={styles.audioList}>
+          {audioItems.map((item) => (
+            <AudioPlayer
+              key={item.id}
+              uri={item.uri}
+              onDelete={() => removeMedia(item.id)}
+            />
+          ))}
+        </View>
+      )}
     </View>
   );
 };
@@ -64,6 +80,10 @@ const styles = StyleSheet.create({
   mediaList: {
     marginTop: 16,
     overflow: 'visible',
+  },
+  audioList: {
+    marginTop: 16,
+    gap: 10,
   },
   mediaItem: {
     marginRight: 12,

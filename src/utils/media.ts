@@ -10,6 +10,10 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'video/mp4': 'mp4',
   'video/quicktime': 'mov',
   'video/x-m4v': 'm4v',
+  'audio/mp4': 'm4a',
+  'audio/m4a': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'm4a',
 };
 
 export const getExtensionFromValue = (value?: string | null): string | null => {
@@ -57,6 +61,6 @@ export const getMediaFileExtension = (item: Pick<MediaItem, 'type' | 'uri' | 'fi
     getExtensionFromValue(item.fileName) ??
     getExtensionFromValue(item.uri) ??
     (item.mimeType ? MIME_EXTENSION_MAP[item.mimeType] : null) ??
-    (item.type === 'video' ? 'mp4' : 'jpg')
+    (item.type === 'video' ? 'mp4' : item.type === 'audio' ? 'm4a' : 'jpg')
   );
 };

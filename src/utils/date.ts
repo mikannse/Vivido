@@ -78,3 +78,39 @@ export const getWeekDayLabel = (value: string): string => {
   const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
   return weekdays[new Date(parsed).getDay()];
 };
+
+const startOfDay = (date: Date): number => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+
+/**
+ * 将时间戳归入一个轻量的自然时间分组标签（今天/昨天/本周/上个月……），
+ * 用于首页时间线的分隔线。纯本地日历计算，无第三方依赖。
+ */
+export const getRelativeTimeGroup = (
+  timestamp: number,
+  now: number = Date.now()
+): string => {
+  const today = new Date(now);
+  const target = new Date(timestamp);
+
+  const dayDiff = Math.round((startOfDay(today) - startOfDay(target)) / 86400000);
+
+  if (dayDiff <= 0) return '今天';
+  if (dayDiff === 1) return '昨天';
+  if (dayDiff === 2) return '前天';
+  if (dayDiff < 7) return '本周';
+
+  const sameYear = target.getFullYear() === today.getFullYear();
+  const monthDiff =
+    (today.getFullYear() - target.getFullYear()) * 12 +
+    (today.getMonth() - target.getMonth());
+
+  if (monthDiff === 0) return '本月';
+  if (monthDiff === 1) return '上个月';
+  if (sameYear) return `${target.getMonth() + 1}月`;
+  return `${target.getFullYear()}年${target.getMonth() + 1}月`;
+};
+

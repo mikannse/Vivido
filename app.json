@@ -13,7 +13,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.vivido.diary"
+      "bundleIdentifier": "com.vivido.diary",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Vivido 需要访问麦克风，以便你录制语音日记附件。"
+      }
     },
     "android": {
       "adaptiveIcon": {

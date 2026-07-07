@@ -21,9 +21,14 @@ import { StyledDialog } from '../components/StyledDialog';
 import { getOrderedMedia } from '../utils/media';
 import { VideoPoster } from '../components/VideoPoster';
 import { DiaryContent } from '../components/DiaryContent';
+import { AudioPlayer } from '../components/AudioPlayer';
+import { usePreference } from '../hooks/usePreference';
+import { PREF_KEYS } from '../services/preferences';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Detail'>;
 type DetailRouteProp = RouteProp<RootStackParamList, 'Detail'>;
+
+type DetailMode = 'refined' | 'quick';
 
 const { width } = Dimensions.get('window');
 const BRAND_GOLD = '#c47030';
@@ -87,6 +92,7 @@ export const DetailScreen: React.FC = () => {
   const [nextDiaryId, setNextDiaryId] = useState<string | null>(null);
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [errorDialogVisible, setErrorDialogVisible] = useState(false);
+  const [mode, setMode] = usePreference<DetailMode>(PREF_KEYS.detailMode, 'refined');
 
   const flatListRef = useRef<FlatList>(null);
 
@@ -176,7 +182,9 @@ export const DetailScreen: React.FC = () => {
   }
 
   const allMedia = getOrderedMedia(diary.media);
-  const hasMedia = allMedia.length > 0;
+  const visualMedia = allMedia.filter((m) => m.type !== 'audio');
+  const audioMedia = allMedia.filter((m) => m.type === 'audio');
+  const hasMedia = visualMedia.length > 0;
 
   const renderMediaItem = ({ item, index }: { item: MediaItem; index: number }) => {
     if (item.type === 'video') {
@@ -212,11 +220,11 @@ export const DetailScreen: React.FC = () => {
   };
 
   const renderPageIndicator = () => {
-    if (allMedia.length <= 1) return null;
+    if (visualMedia.length <= 1) return null;
 
     return (
       <View style={styles.pageIndicator}>
-        {allMedia.map((_, index) => (
+        {visualMedia.map((_, index) => (
           <View
             key={index}
             style={[
@@ -244,6 +252,13 @@ export const DetailScreen: React.FC = () => {
           </TouchableOpacity>
           <View style={styles.headerActions}>
             <TouchableOpacity
+              onPress={() => setMode(mode === 'refined' ? 'quick' : 'refined')}
+              style={styles.actionButton}
+              accessibilityLabel="切换呈现模式"
+            >
+              <Text style={styles.editText}>{mode === 'refined' ? '随手记' : '精致'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               onPress={() => navigation.navigate('Editor', { diaryId })}
               style={styles.actionButton}
             >
@@ -265,7 +280,7 @@ export const DetailScreen: React.FC = () => {
             <View style={styles.mediaSection}>
               <FlatList
                 ref={flatListRef}
-                data={allMedia}
+                data={visualMedia}
                 renderItem={renderMediaItem}
                 keyExtractor={(item) => item.id}
                 horizontal
@@ -279,31 +294,86 @@ export const DetailScreen: React.FC = () => {
           )}
 
           {/* Content cards */}
-          <View style={styles.contentStack}>
-            {/* Artistic date */}
-            <ArtisticDateHeader timestamp={diary.createdAt} />
+          <View style={mode === 'refined' ? styles.contentStack : styles.contentStackQuick}>
+            {mode === 'refined' ? (
+              <>
+                {/* Artistic date */}
+                <ArtisticDateHeader timestamp={diary.createdAt} />
 
-            {/* Title */}
-            <View style={styles.titleSection}>
-              <Text style={styles.title}>{diary.title || '无标题'}</Text>
-            </View>
+                {/* Title */}
+                <View style={styles.titleSection}>
+                  <Text style={styles.title}>{diary.title || '无标题'}</Text>
+                </View>
 
-            {/* Content */}
-            {diary.content ? (
-              <View style={styles.contentSection}>
-                <DiaryContent content={diary.content} />
-                <Text style={styles.charCount}>{diary.content.length} 字</Text>
-              </View>
-            ) : null}
+                {/* Content */}
+                {diary.content ? (
+                  <View style={styles.contentSection}>
+                    <DiaryContent content={diary.content} />
+                    <Text style={styles.charCount}>{diary.content.length} 字</Text>
+                  </View>
+                ) : null}
 
-            {/* Watermark */}
-            <VividoWatermark />
+                {/* Audio attachments */}
+                {audioMedia.length > 0 && (
+                  <View style={styles.audioSection}>
+                    {audioMedia.map((item) => (
+                      <AudioPlayer key={item.id} uri={item.uri} />
+                    ))}
+                  </View>
+                )}
 
-            {/* Last modified */}
-            {diary.updatedAt !== diary.createdAt && (
-              <Text style={styles.updatedText}>
-                最后修改: {formatDateFull(diary.updatedAt)}
-              </Text>
+                {/* Tags */}
+                {diary.tags.length > 0 && (
+                  <View style={styles.tagRow}>
+                    {diary.tags.map((tag) => (
+                      <View key={tag.id} style={styles.tagPill}>
+                        <View style={[styles.tagDot, { backgroundColor: tag.color }]} />
+                        <Text style={styles.tagText}>{tag.name}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Watermark */}
+                <VividoWatermark />
+
+                {/* Last modified */}
+                {diary.updatedAt !== diary.createdAt && (
+                  <Text style={styles.updatedText}>
+                    最后修改: {formatDateFull(diary.updatedAt)}
+                  </Text>
+                )}
+              </>
+            ) : (
+              <>
+                {/* Quick note: compact 便签 style */}
+                <Text style={styles.quickDate}>{formatDateFull(diary.createdAt)}</Text>
+                {diary.title ? <Text style={styles.quickTitle}>{diary.title}</Text> : null}
+                {diary.content ? (
+                  <Text style={styles.quickContent}>{diary.content}</Text>
+                ) : null}
+
+                {/* Audio attachments */}
+                {audioMedia.length > 0 && (
+                  <View style={styles.audioSection}>
+                    {audioMedia.map((item) => (
+                      <AudioPlayer key={item.id} uri={item.uri} compact />
+                    ))}
+                  </View>
+                )}
+
+                {/* Tags */}
+                {diary.tags.length > 0 && (
+                  <View style={styles.tagRow}>
+                    {diary.tags.map((tag) => (
+                      <View key={tag.id} style={styles.tagPill}>
+                        <View style={[styles.tagDot, { backgroundColor: tag.color }]} />
+                        <Text style={styles.tagText}>{tag.name}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </>
             )}
 
             {/* Navigation buttons at bottom */}
@@ -330,7 +400,7 @@ export const DetailScreen: React.FC = () => {
       </SafeAreaView>
 
       <FullScreenGallery
-        media={allMedia}
+        media={visualMedia}
         initialIndex={galleryIndex}
         visible={galleryVisible}
         onClose={() => setGalleryVisible(false)}
@@ -538,6 +608,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingTop: 12,
   },
+  contentStackQuick: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  quickDate: {
+    fontSize: 13,
+    color: BRAND_GOLD,
+    fontFamily: 'LXGWWenKaiLite',
+    marginBottom: 10,
+    letterSpacing: 0.5,
+  },
+  quickTitle: {
+    fontSize: 19,
+    color: TEXT_PRIMARY,
+    fontFamily: 'LXGWWenKaiLite',
+    fontWeight: '600',
+    marginBottom: 8,
+    lineHeight: 26,
+  },
+  quickContent: {
+    fontSize: 16,
+    color: TEXT_PRIMARY,
+    fontFamily: 'LXGWWenKaiLite',
+    lineHeight: 27,
+    letterSpacing: 0.2,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 16,
+  },
+  tagPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(196, 112, 48, 0.08)',
+  },
+  tagDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  tagText: {
+    fontSize: 12,
+    color: TEXT_SECONDARY,
+    fontFamily: 'LXGWWenKaiLite',
+  },
   artisticDateContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -582,6 +703,11 @@ const styles = StyleSheet.create({
   },
   contentSection: {
     marginBottom: 16,
+  },
+  audioSection: {
+    marginTop: 8,
+    marginBottom: 8,
+    gap: 10,
   },
   title: {
     fontSize: 26,

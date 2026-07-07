@@ -2,7 +2,7 @@
 
 export interface MediaItem {
   id: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'audio';
   uri: string;
   thumbnail?: string;
   fileName?: string | null;

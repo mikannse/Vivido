@@ -2,9 +2,10 @@ import * as SQLite from 'expo-sqlite';
 import { DiaryEntry, MediaItem, Tag, TimeFilter, MonthFilter } from '../types';
 import { getDateRangeForKey } from '../utils/date';
 import { generateId } from '../utils/uuid';
+import { accumulateWordFrequency } from '../utils/wordcloud';
 
 const DB_NAME = 'diary.db';
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -128,6 +129,7 @@ export const initDatabase = async (): Promise<void> => {
 
 const MIGRATIONS: Record<number, string[]> = {
   2: [], // Version 2 is baseline; structural additions handled by ensure* helpers
+  3: [], // Version 3 adds audio media type; media.type is a TEXT column, no ALTER TABLE needed
 };
 
 const ensureSchemaVersion = async (): Promise<void> => {
@@ -523,41 +525,6 @@ export const searchDiaries = async (
   }));
 };
 
-// Get heatmap data (count entries per day)
-export const getHeatmapData = async (
-  days: number = 365,
-  query: string = '',
-  tagIds: string[] = [],
-  timeFilter: TimeFilter = 'all',
-  selectedDate?: string | null,
-  monthFilter?: MonthFilter | null
-): Promise<Map<string, number>> => {
-  if (!db) throw new Error('Database not initialized');
-
-  const startDate = Date.now() - days * 24 * 60 * 60 * 1000;
-  const { whereSql, params } = buildDiscoveryWhereClause(
-    query,
-    tagIds,
-    timeFilter,
-    selectedDate,
-    monthFilter
-  );
-
-  const rows = await db.getAllAsync<{ date: string; count: number }>(
-    `SELECT date(createdAt/1000, 'unixepoch', 'localtime') as date, COUNT(*) as count
-     FROM diaries
-     ${whereSql} AND createdAt >= ?
-     GROUP BY date`,
-    [...params, startDate]
-  );
-
-  const map = new Map<string, number>();
-  for (const row of rows) {
-    map.set(row.date, row.count);
-  }
-  return map;
-};
-
 // Get word frequency from diary content
 export const getWordFrequency = async (
   months: number = 1,
@@ -586,19 +553,11 @@ export const getWordFrequency = async (
     shouldApplyRecentWindow ? [...params, startDate.getTime()] : params
   );
 
-  // Simple Chinese word extraction (character-based for simplicity)
+  // 分词/词频启发式收敛在 utils/wordcloud（零依赖、无 AI），不外溢到组件
   const wordCount = new Map<string, number>();
-  const stopWords = new Set(['的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这', '那', '什么', '吗', '吧', '呢', '啊', '哦', '嗯', '呀', '哈', '啦']);
 
   for (const diary of diaries) {
-    // Pre-filter non-Chinese characters to reduce iteration and regex overhead
-    const chineseChars = diary.content.replace(/[^\u4e00-\u9fa5]/g, '');
-    for (let i = 0; i < chineseChars.length - 1; i++) {
-      const word = chineseChars.substring(i, i + 2);
-      if (!stopWords.has(word)) {
-        wordCount.set(word, (wordCount.get(word) || 0) + 1);
-      }
-    }
+    accumulateWordFrequency(diary.content, wordCount);
   }
 
   return wordCount;

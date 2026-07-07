@@ -23,5 +23,6 @@ export const colors = {
   primary: '#c47030',
   text: '#3d2c1e',
   textSecondary: '#827066',
+  textTertiary: '#a89080',
   border: '#e2ddd8',
 };

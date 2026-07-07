@@ -1,17 +1,25 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { View, FlatList, StyleSheet, TouchableOpacity, Text, RefreshControl, ActivityIndicator } from 'react-native';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
+import { View, FlatList, StyleSheet, TouchableOpacity, Text, RefreshControl, ActivityIndicator, Dimensions } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RootStackParamList, DiaryEntry } from '../types';
 import { getDiariesPaginated } from '../services/database';
+import { getRelativeTimeGroup } from '../utils/date';
+import { usePreference } from '../hooks/usePreference';
+import { PREF_KEYS } from '../services/preferences';
+import { colors, typography } from '../theme';
 import { TimelineCard } from '../components/TimelineCard';
+import { CarouselCard } from '../components/CarouselCard';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
+
+type HomeLayout = 'timeline' | 'carousel';
 
 // Pagination settings
 const PAGE_SIZE = 20;
 const CACHE_TTL_MS = 1000;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
@@ -19,6 +27,7 @@ export const HomeScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [layout, setLayout] = usePreference<HomeLayout>(PREF_KEYS.homeLayout, 'timeline');
 
   // Cache refs to avoid redundant loads and stale closures
   const lastLoadTimeRef = useRef<number>(0);
@@ -26,6 +35,19 @@ export const HomeScreen: React.FC = () => {
   const currentPageRef = useRef(0);
   const diariesRef = useRef(diaries);
   diariesRef.current = diaries;
+
+  // 为每个条目计算是否需要在其上方显示时间分隔线：与上一条不同分组时显示。
+  // 数据按 createdAt DESC 拼接，分页追加后此比较天然延续、不重复不错位。
+  const sectionHeaders = useMemo(() => {
+    const now = Date.now();
+    let prevGroup: string | null = null;
+    return diaries.map((diary) => {
+      const group = getRelativeTimeGroup(diary.createdAt, now);
+      const header = group === prevGroup ? null : group;
+      prevGroup = group;
+      return header;
+    });
+  }, [diaries]);
 
   const loadDiariesPage = useCallback(async (page: number, force = false) => {
     if (isLoadingRef.current && !force && page > 0) return;
@@ -81,12 +103,34 @@ export const HomeScreen: React.FC = () => {
     setRefreshing(false);
   };
 
-  const renderItem = ({ item }: { item: DiaryEntry }) => (
-    <TimelineCard
+  const renderItem = ({ item, index }: { item: DiaryEntry; index: number }) => {
+    const header = sectionHeaders[index];
+    return (
+      <View>
+        {header ? (
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionHeaderText}>{header}</Text>
+          </View>
+        ) : null}
+        <TimelineCard
+          diary={item}
+          onPress={() => navigation.navigate('Detail', { diaryId: item.id })}
+        />
+      </View>
+    );
+  };
+
+  const renderCarouselItem = ({ item }: { item: DiaryEntry }) => (
+    <CarouselCard
       diary={item}
+      width={SCREEN_WIDTH}
       onPress={() => navigation.navigate('Detail', { diaryId: item.id })}
     />
   );
+
+  const toggleLayout = () => {
+    setLayout(layout === 'timeline' ? 'carousel' : 'timeline');
+  };
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
@@ -112,6 +156,13 @@ export const HomeScreen: React.FC = () => {
         <View style={styles.headerButtons}>
           <TouchableOpacity
             style={styles.headerButton}
+            onPress={toggleLayout}
+            accessibilityLabel="切换浏览布局"
+          >
+            <Text style={styles.headerIcon}>{layout === 'timeline' ? '▦' : '☰'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerButton}
             onPress={() => navigation.navigate('Discovery')}
           >
             <Text style={styles.headerIcon}>◎</Text>
@@ -125,24 +176,46 @@ export const HomeScreen: React.FC = () => {
         </View>
       </View>
 
-      <FlatList
-        data={diaries}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={renderEmpty}
-        ListFooterComponent={renderFooter}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#827066"
-          />
-        }
-        onEndReached={loadMore}
-        onEndReachedThreshold={0.5}
-        showsVerticalScrollIndicator={false}
-      />
+      {layout === 'carousel' ? (
+        <FlatList
+          data={diaries}
+          renderItem={renderCarouselItem}
+          keyExtractor={(item) => item.id}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.carouselList}
+          ListEmptyComponent={renderEmpty}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#827066"
+            />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+        />
+      ) : (
+        <FlatList
+          data={diaries}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={renderEmpty}
+          ListFooterComponent={renderFooter}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#827066"
+            />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
 
       <TouchableOpacity
         style={styles.fab}
@@ -208,6 +281,22 @@ const styles = StyleSheet.create({
   list: {
     paddingVertical: 8,
     flexGrow: 1,
+  },
+  carouselList: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    flexGrow: 1,
+  },
+  sectionHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 6,
+  },
+  sectionHeaderText: {
+    ...typography.body,
+    fontSize: 13,
+    color: colors.textTertiary,
+    letterSpacing: 1,
   },
   footer: {
     flexDirection: 'row',

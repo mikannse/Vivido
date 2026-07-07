@@ -118,7 +118,9 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({ diary, onPress }) =>
   const orderedMedia = getOrderedMedia(diary.media);
   const images = orderedMedia.filter((m) => m.type === 'image');
   const videos = orderedMedia.filter((m) => m.type === 'video');
+  const audios = orderedMedia.filter((m) => m.type === 'audio');
   const hasVideo = videos.length > 0;
+  const hasAudio = audios.length > 0;
   const totalMedia = orderedMedia.length;
 
   const previewContent =
@@ -199,6 +201,11 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({ diary, onPress }) =>
               <Text style={styles.preview} numberOfLines={2}>
                 {previewContent}
               </Text>
+            )}
+            {hasAudio && (
+              <View style={styles.audioTag}>
+                <Text style={styles.audioTagText}>♪ 语音 {audios.length}</Text>
+              </View>
             )}
           </View>
 
@@ -335,6 +342,19 @@ const styles = StyleSheet.create({
     color: TEXT_SECONDARY,
     fontFamily: 'LXGWWenKaiLite',
     lineHeight: 20,
+  },
+  audioTag: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(196, 112, 48, 0.1)',
+  },
+  audioTagText: {
+    fontSize: 11,
+    color: BRAND_GOLD,
+    fontFamily: 'LXGWWenKaiLite',
   },
   mediaCountBadge: {
     position: 'absolute',

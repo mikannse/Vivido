@@ -19,7 +19,10 @@ import { getAllDiaries, getAllTags, replaceAllData, SCHEMA_VERSION } from '../se
 import { getMediaFileExtension, getExtensionFromValue } from '../utils/media';
 import { APP_VERSION } from '../constants';
 
-const BACKUP_VERSION = 2;
+const BACKUP_VERSION = 3;
+// 显式白名单：直接把 BACKUP_VERSION 改 3 会拒绝所有 v2 老备份（AR4）。
+// 保留 1/2 解析路径，确保旧备份仍可导入（NFR7）。
+const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3];
 const BACKUP_FOLDER_PREFIX = 'vivido-backup';
 const BACKUP_MANIFEST_NAME = 'backup-manifest.json';
 const BACKUP_MEDIA_FOLDER = 'media';
@@ -96,7 +99,8 @@ const parseBackupManifest = (rawContent: string): BackupManifest => {
   const parsed = JSON.parse(rawContent) as Partial<BackupManifest>;
 
   if (
-    (parsed.version !== 1 && parsed.version !== BACKUP_VERSION) ||
+    typeof parsed.version !== 'number' ||
+    !SUPPORTED_BACKUP_VERSIONS.includes(parsed.version) ||
     !Array.isArray(parsed.diaries)
   ) {
     throw new Error('Unsupported backup format');
@@ -154,17 +158,24 @@ const parseBackupManifest = (rawContent: string): BackupManifest => {
           if (
             !media ||
             typeof media.id !== 'string' ||
-            (media.type !== 'image' && media.type !== 'video') ||
+            (media.type !== 'image' && media.type !== 'video' && media.type !== 'audio') ||
             typeof media.relativePath !== 'string'
           ) {
             throw new Error('Backup manifest media entry is invalid');
           }
 
+          const defaultMime =
+            media.type === 'video'
+              ? 'video/mp4'
+              : media.type === 'audio'
+                ? 'audio/mp4'
+                : 'image/jpeg';
+
           return {
             id: media.id,
             type: media.type,
             relativePath: media.relativePath,
-            mimeType: media.mimeType || (media.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+            mimeType: media.mimeType || defaultMime,
             thumbnailRelativePath: media.thumbnailRelativePath,
             position: media.position,
           };
@@ -217,11 +228,17 @@ export const exportBackup = async (
       media: diary.media.map((media) => {
         const ext = getMediaFileExtension(media);
         const fileName = `${media.id}.${ext}`;
+        const mimeType =
+          media.type === 'video'
+            ? 'video/mp4'
+            : media.type === 'audio'
+              ? 'audio/mp4'
+              : 'image/jpeg';
         return {
           id: media.id,
           type: media.type,
           relativePath: `${BACKUP_MEDIA_FOLDER}/${fileName}`,
-          mimeType: media.type === 'video' ? 'video/mp4' : 'image/jpeg',
+          mimeType,
           thumbnailRelativePath: media.thumbnail ? `${BACKUP_MEDIA_FOLDER}/${media.id}_thumb.${ext}` : undefined,
           position: media.position,
         };
@@ -443,7 +460,7 @@ export const importBackup = async (
           }
 
           // Generate new filename to avoid conflicts
-          const ext = getExtensionFromValue(entryName) ?? (media.type === 'video' ? 'mp4' : 'jpg');
+          const ext = getExtensionFromValue(entryName) ?? (media.type === 'video' ? 'mp4' : media.type === 'audio' ? 'm4a' : 'jpg');
           const newFileName = `${generateId()}.${ext}`;
           const destPath = `${mediaDestDir}${newFileName}`;
 

@@ -16,7 +16,6 @@ import { RootStackParamList, MonthFilter } from '../types';
 import { useDiscovery } from '../hooks/useDiscovery';
 import { FilterChips } from '../components/FilterChips';
 import { TagChip } from '../components/TagChip';
-import { ActivityHeatmap } from '../components/ActivityHeatmap';
 import { WordCloud } from '../components/WordCloud';
 import { EmptyDiscovery } from '../components/EmptyDiscovery';
 
@@ -37,7 +36,6 @@ export const DiscoveryScreen: React.FC = () => {
   const {
     diaries,
     tags,
-    heatmapData,
     wordCloudData,
     isLoading,
     error,
@@ -73,10 +71,6 @@ export const DiscoveryScreen: React.FC = () => {
   const handleTagSearch = (word: string) => {
     setShowSearch(true);
     setSearchQuery(word);
-  };
-
-  const handleDayPress = (date: string) => {
-    selectDate(date);
   };
 
   const handleMonthFilterPress = () => {
@@ -244,11 +238,6 @@ export const DiscoveryScreen: React.FC = () => {
             </ScrollView>
           </View>
         )}
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>生活热力图</Text>
-          <ActivityHeatmap data={heatmapData} onDayPress={handleDayPress} />
-        </View>
 
         {wordCloudData.length > 0 && (
           <View style={styles.section}>

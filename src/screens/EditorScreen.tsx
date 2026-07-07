@@ -20,6 +20,7 @@ import { saveMedia, deleteMedia, deleteDiaryMedia, MEDIA_DIR_PATH } from '../ser
 import { generateId } from '../utils/uuid';
 import { MediaPicker } from '../components/MediaPicker';
 import { TagEditor } from '../components/TagEditor';
+import { AudioRecorder } from '../components/AudioRecorder';
 import { StyledDialog } from '../components/StyledDialog';
 import { assignMediaPositions, getMediaFileExtension, getOrderedMedia } from '../utils/media';
 import { formatDateInputValue, getWeekDayLabel, parseDateInputValue } from '../utils/date';
@@ -63,6 +64,9 @@ export const EditorScreen: React.FC = () => {
 
   // Date picker
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Audio recorder
+  const [showAudioRecorder, setShowAudioRecorder] = useState(false);
 
   // Track unsaved changes
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -282,6 +286,16 @@ export const EditorScreen: React.FC = () => {
     }
   };
 
+  const handleAudioRecorded = (uri: string) => {
+    const newAudio: MediaItem = {
+      id: generateId(),
+      type: 'audio',
+      uri,
+      mimeType: 'audio/mp4',
+    };
+    setMedia(assignMediaPositions([...media, newAudio]));
+  };
+
   const handleSave = async (skipNavigation?: boolean) => {
     if (!title.trim() && !content.trim() && media.length === 0) {
       setEmptyContentDialogVisible(true);
@@ -471,14 +485,24 @@ export const EditorScreen: React.FC = () => {
                 scrollEnabled={false}
                 autoCorrect={false}
                 autoCapitalize="none"
+                autoFocus={!isEditing}
               />
             </View>
 
             {/* Media section */}
             <View style={styles.mediaSection}>
-              <TouchableOpacity onPress={pickImage} activeOpacity={0.7}>
-                <Text style={styles.mediaLabel}>添加媒体</Text>
-              </TouchableOpacity>
+              <View style={styles.mediaButtonRow}>
+                <TouchableOpacity onPress={pickImage} activeOpacity={0.7} style={styles.mediaButtonFlex}>
+                  <Text style={styles.mediaLabel}>添加媒体</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setShowAudioRecorder(true)}
+                  activeOpacity={0.7}
+                  style={styles.mediaButtonFlex}
+                >
+                  <Text style={styles.mediaLabel}>录音</Text>
+                </TouchableOpacity>
+              </View>
               <MediaPicker media={media} onMediaChange={setMedia} />
             </View>
 
@@ -616,6 +640,12 @@ export const EditorScreen: React.FC = () => {
         onConfirm={handleDateConfirm}
         onCancel={() => setShowDatePicker(false)}
       />
+
+      <AudioRecorder
+        visible={showAudioRecorder}
+        onClose={() => setShowAudioRecorder(false)}
+        onRecorded={handleAudioRecorded}
+      />
     </SafeAreaView>
   );
 };
@@ -734,6 +764,13 @@ const styles = StyleSheet.create({
   mediaSection: {
     paddingHorizontal: 16,
     paddingTop: 20,
+  },
+  mediaButtonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  mediaButtonFlex: {
+    flex: 1,
   },
   mediaLabel: {
     fontSize: 14,

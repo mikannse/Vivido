@@ -3,7 +3,6 @@ import { DiaryEntry, Tag, TimeFilter, WordFrequency, MonthFilter } from '../type
 import {
   searchDiaries,
   getAllTags,
-  getHeatmapData,
   getWordFrequency,
 } from '../services/database';
 
@@ -13,7 +12,6 @@ interface UseDiscoveryReturn {
   // State
   diaries: DiaryEntry[];
   tags: Tag[];
-  heatmapData: Map<string, number>;
   wordCloudData: WordFrequency[];
   isLoading: boolean;
   error: string | null;
@@ -37,7 +35,6 @@ interface UseDiscoveryReturn {
 export const useDiscovery = (): UseDiscoveryReturn => {
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [heatmapData, setHeatmapData] = useState<Map<string, number>>(new Map());
   const [wordCloudData, setWordCloudData] = useState<WordFrequency[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,10 +75,9 @@ export const useDiscovery = (): UseDiscoveryReturn => {
     setError(null);
 
     try {
-      const [diariesResult, tagsResult, heatmapResult, wordFreqResult] = await Promise.all([
+      const [diariesResult, tagsResult, wordFreqResult] = await Promise.all([
         searchDiaries(debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
         getAllTags(),
-        getHeatmapData(365, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
         getWordFrequency(1, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
       ]);
 
@@ -89,7 +85,6 @@ export const useDiscovery = (): UseDiscoveryReturn => {
 
       setDiaries(diariesResult);
       setTags(tagsResult);
-      setHeatmapData(heatmapResult);
 
       // Convert word frequency to WordFrequency with levels
       const sortedWords = Array.from(wordFreqResult.entries())
@@ -176,7 +171,6 @@ export const useDiscovery = (): UseDiscoveryReturn => {
   return {
     diaries,
     tags,
-    heatmapData,
     wordCloudData,
     isLoading,
     error,

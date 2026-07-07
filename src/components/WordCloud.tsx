@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { colors, typography } from '../theme';
 
 interface WordFrequency {
   word: string;
@@ -27,9 +28,9 @@ export const WordCloud: React.FC<WordCloudProps> = ({ data, onWordPress }) => {
 
   const getColor = (level: 1 | 2 | 3): string => {
     switch (level) {
-      case 1: return '#a89080';
-      case 2: return '#c47030';
-      case 3: return '#3d2c1e';
+      case 1: return colors.textTertiary;
+      case 2: return colors.primary;
+      case 3: return colors.text;
     }
   };
 
@@ -62,7 +63,7 @@ export const WordCloud: React.FC<WordCloudProps> = ({ data, onWordPress }) => {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#fdfcfb',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
     minHeight: 120,
@@ -76,7 +77,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   word: {
-    fontFamily: 'LXGWWenKaiLite',
+    ...typography.body,
     marginHorizontal: 4,
   },
 });
