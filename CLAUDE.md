@@ -45,6 +45,26 @@ Local builds require Android SDK and can fail due to native compilation issues. 
 1. **Cloud build (recommended)**: `eas build --platform android --profile preview`
 2. **Local build**: Run `npx expo prebuild --platform android` first, then `./gradlew assembleRelease` in android/
 
+## Build Cache
+
+After modifying source files (especially SQL queries, asset loading, or native module interactions), cached build artifacts can cause stale behavior. Recommended cleanup:
+
+```bash
+# Metro / Expo bundler cache (most common culprit)
+npx expo start -c
+
+# Prebuild cache (local builds only)
+npx expo prebuild --platform android --clean
+
+# Gradle build artifacts (local builds only, in android/)
+cd android && ./gradlew clean
+
+# EAS cloud build (force fresh build)
+npx eas build --platform android --profile preview --clear-cache
+```
+
+Metro cache (`npx expo start -c`) is the highest-value reset — it clears JS bundle caching without requiring a full rebuild. Use `--clear-cache` on EAS builds only if you observe functional issues after deployment.
+
 ## Building iOS
 
 iOS builds require macOS with Xcode. Cloud build is recommended: `eas build --platform ios --profile production`
