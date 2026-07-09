@@ -2,7 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import { DiaryEntry, MediaItem, Tag, TimeFilter, MonthFilter } from '../types';
 import { getDateRangeForKey } from '../utils/date';
 import { generateId } from '../utils/uuid';
-import { accumulateWordFrequency } from '../utils/wordcloud';
+import { accumulateWordFrequency, type WordCount } from '../utils/wordcloud';
 
 const DB_NAME = 'diary.db';
 export const SCHEMA_VERSION = 3;
@@ -423,12 +423,23 @@ export const getAdjacentDiaryIds = async (
   return { prevId: prev?.id ?? null, nextId: next?.id ?? null };
 };
 
+/**
+ * 控制 buildDiscoveryWhereClause 中哪些筛选维度生效。
+ * 用于 getWordFrequency 等场景，需要部分跳过时间/日期/月份筛选。
+ */
+type DiscoveryWhereOptions = {
+  disableTimeFilter?: boolean;
+  disableDateFilter?: boolean;
+  disableMonthFilter?: boolean;
+};
+
 const buildDiscoveryWhereClause = (
   query: string,
   tagIds: string[],
   timeFilter: TimeFilter,
   selectedDate?: string | null,
-  monthFilter?: MonthFilter | null
+  monthFilter?: MonthFilter | null,
+  options?: DiscoveryWhereOptions
 ): { whereSql: string; params: (string | number)[] } => {
   let whereSql = ' WHERE 1=1';
   const params: (string | number)[] = [];
@@ -439,18 +450,18 @@ const buildDiscoveryWhereClause = (
     params.push(searchTerm, searchTerm);
   }
 
-  if (selectedDate) {
+  if (!options?.disableDateFilter && selectedDate) {
     const range = getDateRangeForKey(selectedDate);
     if (range) {
       whereSql += ' AND createdAt >= ? AND createdAt <= ?';
       params.push(range.start, range.end);
     }
-  } else if (monthFilter) {
+  } else if (!options?.disableMonthFilter && monthFilter) {
     const startOfMonth = new Date(monthFilter.year, monthFilter.month - 1, 1).getTime();
     const endOfMonth = new Date(monthFilter.year, monthFilter.month, 0, 23, 59, 59, 999).getTime();
     whereSql += ' AND createdAt >= ? AND createdAt <= ?';
     params.push(startOfMonth, endOfMonth);
-  } else {
+  } else if (!options?.disableTimeFilter) {
     const now = new Date();
     if (timeFilter === 'week') {
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -529,38 +540,27 @@ export const searchDiaries = async (
 
 // Get word frequency from diary content
 export const getWordFrequency = async (
-  months: number = 1,
   query: string = '',
   tagIds: string[] = [],
-  _timeFilter: TimeFilter = 'all',
+  _timeFilter?: TimeFilter,
   _selectedDate?: string | null,
   _monthFilter?: MonthFilter | null
-): Promise<Map<string, number>> => {
+): Promise<Map<string, WordCount>> => {
   if (!db) throw new Error('Database not initialized');
 
   // 词云始终限制近 30 天，不受当前时间筛选器影响（决策 2026-07-08）。
-  // 独立构建 WHERE 子句：只复用搜索词和标签筛选，不继承用户时间/日期/月份筛选器（#6）。
+  // 复用 buildDiscoveryWhereClause 的搜索词+标签筛选，但禁用时间/日期/月份筛选（#6/#11）。
   // 用 Date.now() - 30 天避免 setMonth 跨月回滚问题（#7）。
   const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   startDate.setHours(0, 0, 0, 0);
 
-  let whereSql = ' WHERE 1=1';
-  const params: (string | number)[] = [];
+  const { whereSql: baseWhereSql, params } = buildDiscoveryWhereClause(
+    query, tagIds, 'all',
+    undefined, undefined,
+    { disableTimeFilter: true, disableDateFilter: true, disableMonthFilter: true }
+  );
 
-  if (query.trim()) {
-    whereSql += ' AND (title LIKE ? OR content LIKE ?)';
-    const searchTerm = `%${query.trim()}%`;
-    params.push(searchTerm, searchTerm);
-  }
-
-  if (tagIds.length > 0) {
-    whereSql += ` AND EXISTS (
-      SELECT 1 FROM diary_tags dt
-      WHERE dt.diaryId = diaries.id AND dt.tagId IN (${tagIds.map(() => '?').join(',')})
-    )`;
-    params.push(...tagIds);
-  }
-
+  let whereSql = baseWhereSql;
   whereSql += ' AND createdAt >= ?';
   params.push(startDate.getTime());
 
@@ -570,7 +570,7 @@ export const getWordFrequency = async (
   );
 
   // 分词/词频启发式收敛在 utils/wordcloud（零依赖、无 AI），不外溢到组件
-  const wordCount = new Map<string, number>();
+  const wordCount = new Map<string, WordCount>();
 
   for (const diary of diaries) {
     accumulateWordFrequency(diary.content, wordCount);

@@ -48,5 +48,8 @@ decompiled/
 
 backup_test/
 
+# generated analysis / code review artifacts
+angle-b-candidates.json
+
 # Claude Code
 .claude/

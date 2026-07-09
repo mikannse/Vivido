@@ -37,7 +37,7 @@ export type TimeFilter = 'week' | 'month' | 'all';
 export interface WordFrequency {
   word: string;
   count: number;
-  level: 1 | 2 | 3;
+  level: 1 | 2 | 3 | 4 | 5;
 }
 
 export interface MonthFilter {

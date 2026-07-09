@@ -5,6 +5,7 @@ import {
   getAllTags,
   getWordFrequency,
 } from '../services/database';
+import type { WordCount } from '../utils/wordcloud';
 
 const DEBOUNCE_MS = 300;
 
@@ -80,7 +81,7 @@ export const useDiscovery = (): UseDiscoveryReturn => {
       const [diariesResult, tagsResult, wordFreqResult] = await Promise.all([
         searchDiaries(debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
         getAllTags(),
-        getWordFrequency(1, debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
+        getWordFrequency(debouncedSearchQuery, selectedTags, timeFilter, selectedDate, monthFilter),
       ]);
 
       if (!isMountedRef.current || fetchId !== fetchIdRef.current) return;
@@ -89,21 +90,28 @@ export const useDiscovery = (): UseDiscoveryReturn => {
       setTags(tagsResult);
 
       // Convert word frequency to WordFrequency with levels
-      // 最低频次门槛 2：过滤只出现一次的噪声碎片词（#10）。
-      const MIN_FREQ = 2;
+      // 原始频次（raw）用于计算 level（决定颜色/大小），加权分（weighted）仅用于排序。
+      // 动词前缀/语气词后缀已在 wordcloud 层过滤，raw>=1 即可（#10 原 MIN_FREQ=2 因加权分混用导致全 level 3）。
+      const MIN_FREQ = 1;
+      const TOP_N = 20;
+
       const sortedWords = Array.from(wordFreqResult.entries())
-        .filter(([, count]) => count >= MIN_FREQ)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
+        .filter(([, wc]) => wc.raw >= MIN_FREQ)
+        .sort((a, b) => b[1].weighted - a[1].weighted)
+        .slice(0, TOP_N);
 
-      const maxCount = sortedWords.length > 0 ? sortedWords[0][1] : 1;
-      const wordCloud: WordFrequency[] = sortedWords.map(([word, count]) => {
-        const ratio = count / maxCount;
-        let level: 1 | 2 | 3 = 1;
-        if (ratio > 0.6) level = 3;
-        else if (ratio > 0.3) level = 2;
+      const maxRaw = sortedWords.length > 0
+        ? Math.max(...sortedWords.map(([, wc]) => wc.raw))
+        : 1;
+      const wordCloud: WordFrequency[] = sortedWords.map(([word, wc]) => {
+        const ratio = wc.raw / maxRaw;
+        let level: 1 | 2 | 3 | 4 | 5 = 1;
+        if (ratio > 0.8) level = 5;
+        else if (ratio > 0.6) level = 4;
+        else if (ratio > 0.4) level = 3;
+        else if (ratio > 0.2) level = 2;
 
-        return { word, count, level };
+        return { word, count: wc.raw, level };
       });
 
       setWordCloudData(wordCloud);

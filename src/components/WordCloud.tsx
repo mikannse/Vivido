@@ -1,12 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { colors, typography } from '../theme';
-
-interface WordFrequency {
-  word: string;
-  count: number;
-  level: 1 | 2 | 3;
-}
+import type { WordFrequency } from '../types';
 
 interface WordCloudProps {
   data: WordFrequency[];
@@ -18,19 +13,24 @@ export const WordCloud: React.FC<WordCloudProps> = ({ data, onWordPress }) => {
     return null;
   }
 
-  const getFontSize = (level: 1 | 2 | 3): number => {
+  const getFontSize = (level: 1 | 2 | 3 | 4 | 5): number => {
     switch (level) {
-      case 1: return 14;
-      case 2: return 18;
-      case 3: return 24;
+      case 1: return 12;
+      case 2: return 15;
+      case 3: return 18;
+      case 4: return 22;
+      case 5: return 28;
     }
   };
 
-  const getColor = (level: 1 | 2 | 3): string => {
+  // 暖棕渐变：level 1 最浅 → level 5 最深，中高频词用 primary 橙棕突出
+  const getColor = (level: 1 | 2 | 3 | 4 | 5): string => {
     switch (level) {
-      case 1: return colors.textTertiary;
-      case 2: return colors.primary;
-      case 3: return colors.text;
+      case 1: return colors.border;
+      case 2: return colors.textTertiary;
+      case 3: return colors.textSecondary;
+      case 4: return colors.primary;
+      case 5: return colors.text;
     }
   };
 

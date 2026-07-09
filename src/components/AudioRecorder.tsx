@@ -8,7 +8,7 @@ import {
   requestRecordingPermissionsAsync,
 } from 'expo-audio';
 import type { RecorderState } from 'expo-audio';
-import { getInfoAsync } from 'expo-file-system/legacy';
+import { getInfoAsync, deleteAsync } from 'expo-file-system/legacy';
 import { colors, typography, alpha } from '../theme';
 
 // 绕过 useAudioRecorder（它在渲染阶段通过 useReleasingSharedObject
@@ -77,20 +77,25 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onClose, onRecorde
       // 组件卸载时释放原生对象。
       // 注意：stop() 返回 Promise<void>，必须 await 后再 release()，
       // 否则 release() 可能在 stop() 完成前执行 -> 原生竞争崩溃（#1）。
+      const rec = recorder; // 在当前闭包中捕获此 useEffect 创建的实例
       (async () => {
         try {
-          if (recorder.isRecording) {
-            await recorder.stop();
+          if (rec.isRecording) {
+            await rec.stop();
           }
         } catch {
           // ignore
         }
         try {
-          recorder.release();
+          rec.release();
         } catch {
           // ignore
         }
-        recorderRef.current = null;
+        // 仅在 recorderRef 仍指向同一实例时才 null out，
+        // 避免快速重挂载时 IIFE 恢复后覆盖新实例的引用（#3）。
+        if (recorderRef.current === rec) {
+          recorderRef.current = null;
+        }
       })();
     };
   }, []);
@@ -226,6 +231,14 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onClose, onRecorde
     if (recorder?.isRecording) {
       try {
         await recorder.stop();
+      } catch {
+        // ignore
+      }
+    }
+    // 删除由 prepareToRecordAsync 创建的临时 .m4a 文件（#4）。
+    if (recorder?.uri) {
+      try {
+        await deleteAsync(recorder.uri, { idempotent: true });
       } catch {
         // ignore
       }

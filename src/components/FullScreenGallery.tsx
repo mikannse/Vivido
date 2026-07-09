@@ -113,11 +113,17 @@ export const FullScreenGallery: React.FC<FullScreenGalleryProps> = ({
   const renderMediaItem = useCallback(
     ({ item, index }: { item: MediaItem; index: number }) => {
       const isVideo = item.type === 'video';
+      const isAudio = item.type === 'audio';
 
       return (
         <View style={styles.mediaPage}>
           {isVideo ? (
             <VideoPlayer uri={item.uri} shouldPlay={visible && index === currentIndex} />
+          ) : isAudio ? (
+            <View style={styles.audioPlaceholder}>
+              <Text style={styles.audioPlaceholderIcon}>♪</Text>
+              <Text style={styles.audioPlaceholderLabel}>语音附件</Text>
+            </View>
           ) : (
             <Image
               source={{ uri: item.uri }}
@@ -330,5 +336,21 @@ const styles = StyleSheet.create({
   counterText: {
     fontSize: 14,
     color: 'rgba(255,255,255,0.6)',
+  },
+  audioPlaceholder: {
+    width: width,
+    height: height * 0.7,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioPlaceholderIcon: {
+    fontSize: 64,
+    color: 'rgba(255,255,255,0.6)',
+    marginBottom: 16,
+  },
+  audioPlaceholderLabel: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.4)',
+    fontFamily: 'LXGWWenKaiLite',
   },
 });

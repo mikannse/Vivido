@@ -73,11 +73,11 @@ Custom fonts are loaded in `App.tsx` via expo-font:
 
 ### Database Schema
 - **diaries**: id, title, content, createdAt, updatedAt
-- **media**: id, diaryId (FK), type ('image'|'video'), uri, thumbnail, position
+- **media**: id, diaryId (FK), type ('image'|'video'|'audio'), uri, thumbnail, position
 - **tags**: id, name, color, createdAt
 - **diary_tags**: diaryId (FK), tagId (FK) - many-to-many relationship
 - **schema_version**: version, description, appliedAt - tracks DB migrations
-- `SCHEMA_VERSION = 2` in `database.ts`; `ensureSchemaVersion()` runs on init
+- `SCHEMA_VERSION = 3` in `database.ts`; `ensureSchemaVersion()` runs on init
 - Media entries are cascade-deleted when parent diary is deleted
 - `cleanupUnusedTags()` removes tags with no diary references
 
@@ -104,10 +104,11 @@ Backup export produces a ZIP file containing:
 - `replaceAllData()` performs atomic DB replacement; imported files are cleaned up on error
 
 ### Discovery Screen Architecture
-- Data logic is entirely in `src/hooks/useDiscovery.ts`
+- Data fetching is orchestrated in `src/hooks/useDiscovery.ts`; word frequency filtering (verb/particle/noun heuristics) lives in `src/utils/wordcloud.ts`
 - Combines search query (debounced), tag filters, time filters, date/month filters
-- Fetches diaries, tags, heatmap data, and word frequency in parallel
-- WordCloud levels (1-3) are computed from relative frequency ratios
+- Fetches diaries, tags, and word frequency in parallel
+- WordCloud levels (1-5) are computed from relative raw-frequency ratios
+- Word frequency always uses the last 30 days of data, independent of the user's time filter (decision 2026-07-08)
 
 ### Key Files
 - [src/types/index.ts](src/types/index.ts) - `DiaryEntry`, `MediaItem` interfaces and `RootStackParamList`
