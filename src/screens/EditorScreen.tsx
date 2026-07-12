@@ -614,6 +614,9 @@ export const EditorScreen: React.FC = () => {
             } catch (error) {
               console.error('Failed to delete draft on discard:', error);
             }
+            // Reset unsaved changes BEFORE dispatching navigation to prevent
+            // the beforeRemove listener from re-triggering the dialog loop (#12).
+            setHasUnsavedChanges(false);
             if (pendingNavigation) {
               pendingNavigation();
               setPendingNavigation(null);

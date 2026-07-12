@@ -95,6 +95,45 @@ const ensureDraftTable = async (): Promise<void> => {
   `);
 };
 
+/**
+ * Run database integrity checks and clean up orphaned records on startup.
+ * Handles cases where FK CASCADE may have failed silently (e.g. PRAGMA
+ * foreign_keys was off during a delete operation due to a mid-operation crash).
+ */
+const runIntegrityCheck = async (): Promise<void> => {
+  if (!db) return;
+
+  try {
+    // Verify the database file is not corrupted (lightweight check)
+    const integrityResult = await db.getFirstAsync<{ integrity_check: string }>(
+      'PRAGMA integrity_check'
+    );
+    if (integrityResult && integrityResult.integrity_check !== 'ok') {
+      console.error('[DB Integrity] Database corruption detected:', integrityResult.integrity_check);
+    }
+
+    // Clean up orphaned drafts: drafts referencing diaries that no longer exist
+    await db.runAsync(
+      'DELETE FROM drafts WHERE diaryId IS NOT NULL AND diaryId NOT IN (SELECT id FROM diaries)'
+    );
+
+    // Clean up orphaned media: media referencing diaries that no longer exist
+    await db.runAsync(
+      'DELETE FROM media WHERE diaryId NOT IN (SELECT id FROM diaries)'
+    );
+
+    // Clean up orphaned diary_tags: tags referencing diaries or tags that no longer exist
+    await db.runAsync(
+      'DELETE FROM diary_tags WHERE diaryId NOT IN (SELECT id FROM diaries)'
+    );
+    await db.runAsync(
+      'DELETE FROM diary_tags WHERE tagId NOT IN (SELECT id FROM tags)'
+    );
+  } catch (error) {
+    console.error('[DB Integrity] Failed to run integrity check:', error);
+  }
+};
+
 export const initDatabase = async (): Promise<void> => {
   db = await SQLite.openDatabaseAsync(DB_NAME);
 
@@ -125,6 +164,7 @@ export const initDatabase = async (): Promise<void> => {
   await ensureTagTables();
   await ensureDraftTable();
   await ensureSchemaVersion();
+  await runIntegrityCheck();
 };
 
 const MIGRATIONS: Record<number, string[]> = {
@@ -639,6 +679,8 @@ export const deleteDiary = async (id: string): Promise<void> => {
   await db.withTransactionAsync(async () => {
     await db!.runAsync('DELETE FROM diary_tags WHERE diaryId = ?', [id]);
     await db!.runAsync('DELETE FROM media WHERE diaryId = ?', [id]);
+    await db!.runAsync('DELETE FROM drafts WHERE diaryId = ?', [id]);
+    await db!.runAsync('DELETE FROM drafts WHERE id = ?', [id]);
     await db!.runAsync('DELETE FROM diaries WHERE id = ?', [id]);
   });
 };
