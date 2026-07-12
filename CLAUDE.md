@@ -85,6 +85,13 @@ Custom fonts are loaded in `App.tsx` via expo-font:
 - **Settings** (`SettingsScreen`) - App settings
 - **Discovery** (`DiscoveryScreen`) - 回顾岛: search, filters, heatmap, word cloud
 
+### App Entry & Error Handling (`App.tsx`)
+- On mount, loads 3 custom fonts via `expo-font`, then calls `initDatabase()` from `database.ts`
+- Both font loading and DB init must complete before the main UI renders (loading screen shown)
+- If `initDatabase()` fails, an error screen with a "重新尝试" retry button is shown
+- An `ErrorBoundary` class component wraps the entire navigation tree to catch render errors gracefully
+- Web platform shows a "Web 版本暂不可用" screen instead of the app
+
 ### Data Flow
 1. `App.tsx` initializes database on mount, then renders navigation
 2. All database operations go through `src/services/database.ts`
@@ -92,14 +99,22 @@ Custom fonts are loaded in `App.tsx` via expo-font:
 4. Backup export uses `src/services/backup.ts` to create JSON and share via `expo-sharing`
 
 ### Database Schema
-- **diaries**: id, title, content, createdAt, updatedAt
+- **diaries**: id, title, content, createdAt, updatedAt (FKs cascade-delete media/tags)
 - **media**: id, diaryId (FK), type ('image'|'video'|'audio'), uri, thumbnail, position
-- **tags**: id, name, color, createdAt
+- **tags**: id, name (UNIQUE), color, createdAt
 - **diary_tags**: diaryId (FK), tagId (FK) - many-to-many relationship
+- **drafts**: id, diaryId (FK nullable), title, content, date, media (JSON string), tags (JSON string), updatedAt — auto-save in-progress entries
 - **schema_version**: version, description, appliedAt - tracks DB migrations
-- `SCHEMA_VERSION = 3` in `database.ts`; `ensureSchemaVersion()` runs on init
-- Media entries are cascade-deleted when parent diary is deleted
-- `cleanupUnusedTags()` removes tags with no diary references
+- `SCHEMA_VERSION = 3` in `database.ts`; `initDatabase()` runs `ensureSchemaVersion()` after creating base tables
+- Media entries cascade-deleted when parent diary is deleted; `cleanupUnusedTags()` removes orphaned tags
+- `drafts` table stores in-progress diary entries with JSON-serialized media/tags arrays
+- Separate `expo-sqlite/kv-store` (not diary.db) stores UI preferences; avoids backup pollution and schema migration coupling
+
+## Preferences System
+UI preferences live in a separate `expo-sqlite/kv-store` (independent from the business diary.db):
+- `src/services/preferences.ts` — `getPreferenceSync()` (synchronous first-frame read to avoid layout jank) and `setPreference()` (async write)
+- `src/hooks/usePreference.ts` — generic typed hook `usePreference<T>(key, fallback)` with synchronous init
+- Keys follow `pref.<domain>.<item>` convention; defined in `PREF_KEYS` constant
 
 ### Theme System
 Typography and colors are centralized in `src/theme/index.ts`:
@@ -118,9 +133,9 @@ Typography and colors are centralized in `src/theme/index.ts`:
 
 ### Backup Format
 Backup export produces a ZIP file containing:
-- `backup-manifest.json` (version 2, schemaVersion 2) - diary metadata + tag list + media file paths
+- `backup-manifest.json` (version 3, backward-compatible with v1/v2) - diary metadata + tag list + media file paths
 - `media/` folder - base64-encoded image/video files
-- Import validates schema version and app version before restoring
+- Import validates schema version and app version (`src/constants.ts` exports `APP_VERSION`) before restoring
 - `replaceAllData()` performs atomic DB replacement; imported files are cleaned up on error
 
 ### Discovery Screen Architecture
@@ -137,6 +152,16 @@ Backup export produces a ZIP file containing:
 - [src/services/backup.ts](src/services/backup.ts) - JSON backup creation and sharing
 - [src/theme/index.ts](src/theme/index.ts) - Typography and color tokens
 - [src/utils/](src/utils/) - UUID generation, date formatting, media utilities
+
+### Components
+- **AudioRecorder** / **AudioPlayer** — Record voice memos (via `expo-audio`) and play them back inline
+- **MediaPicker** — Multi-select gallery/camera picker with position-based drag-reordering
+- **TagEditor** / **TagChip** — Inline tag creation, color picker, assignment/removal
+- **DiaryCard** / **CarouselCard** / **TimelineCard** — Three home-screen layout variants (switched via preference)
+- **WordCloud** — 5-level heatmap of frequent words from the last 30 days
+- **FullScreenGallery** — Swipeable full-screen media viewer with pinch-to-zoom
+- **Branding** — Renders "Vivido" text with PlayfairDisplay font
+- **DatePickerModal** / **FilterChips** / **StyledDialog** — Reusable UI primitives
 
 ### Editor Screen Behavior
 The `Editor` screen accepts an optional `diaryId` parameter:
@@ -160,4 +185,7 @@ On Android, TextInput components have internal scrolling. To prevent unwanted sc
 - Use `scrollEnabled={false}` to disable internal scrolling
 - Use `numberOfLines={1}` for explicit single line
 - Consider using fixed `height` instead of `minHeight`
+
+**patch-package**
+The `postinstall` script runs `patch-package`. Any manual fixes to `node_modules` should be persisted as patches via `npx patch-package <package-name>` so they survive `npm install`.
 

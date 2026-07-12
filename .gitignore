@@ -50,6 +50,7 @@ backup_test/
 
 # generated analysis / code review artifacts
 angle-b-candidates.json
+_review_findings.json
 
 # Claude Code
 .claude/
