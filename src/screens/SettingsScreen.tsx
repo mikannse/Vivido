@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Image, Linking, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -108,6 +108,20 @@ export const SettingsScreen: React.FC = () => {
     setImportConfirmDialogVisible(true);
   };
 
+  const openGitHubRepo = async () => {
+    const url = 'https://github.com/mikannse/Vivido';
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('无法打开链接', `请在浏览器中访问：${url}`);
+      }
+    } catch (error) {
+      Alert.alert('打开失败', error instanceof Error ? error.message : '未知错误');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -177,10 +191,27 @@ export const SettingsScreen: React.FC = () => {
             <Text style={styles.itemText}>版本</Text>
             <Text style={styles.itemValue}>{APP_VERSION}</Text>
           </View>
-          <View style={[styles.item, styles.lastItem]}>
+          <View style={styles.item}>
             <Text style={styles.itemText}>应用名称</Text>
             <Text style={styles.itemValue}>Vivido</Text>
           </View>
+          <TouchableOpacity
+            style={[styles.item, styles.lastItem, styles.githubItem]}
+            onPress={openGitHubRepo}
+            activeOpacity={0.7}
+          >
+            <Image
+              source={require('../../assets/github-mark.png')}
+              style={styles.githubIcon}
+            />
+            <View style={styles.githubTextContainer}>
+              <Text style={styles.itemText}>mikannse/Vivido</Text>
+              <Text style={styles.itemDescription}>
+                开源软件 · 在 GitHub 上查看
+              </Text>
+            </View>
+            <Text style={styles.arrow}>{'>'}</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -352,5 +383,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#c47030',
     fontFamily: 'LXGWWenKaiLite',
+  },
+  githubItem: {
+    justifyContent: 'flex-start',
+    gap: 12,
+  },
+  githubIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  githubTextContainer: {
+    flex: 1,
   },
 });
