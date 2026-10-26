@@ -33,6 +33,7 @@ _本文档通过逐步协作式发现构建。各章节随我们共同完成每�
 | **G2 · 交互摩擦优化** | 3 秒进入写作、时间分隔线 | 导航 (`App.tsx`/初始化)、Screen (`Editor`/`Home`) |
 | **G3 · 呈现层可选性** | 首页双布局（瀑布流+轮播）、双模式详情页 | Screen (`Home`/`Detail`) + 新的偏好持久化基元 |
 | **G4 · 新媒体类型** | 语音附件（原声） | 贯穿全栈：types → database(schema v3) → storage → backup → 编辑/浏览组件 |
+| **G5 · 分享长图**（新增 2026-07-21） | 日记生成可分享长图（标题/日期/正文/图片/标签/水印） | Screen (`Detail`→`SharePreview`) + Service (`share.ts`) + 视图截图/相册原生层 |
 
 ### 非功能需求（NFRs）与硬约束
 
@@ -92,6 +93,7 @@ _本文档通过逐步协作式发现构建。各章节随我们共同完成每�
 | **媒体** | expo-image-picker / expo-image / expo-video / **expo-audio(已装未用)** | 语音走 expo-audio |
 | **文件/备份** | expo-file-system + **react-native-zip-archive**（原生 ZIP） | 备份走原生流式 ZIP，非 JSZip |
 | **持久化(UI偏好)** | 当前缺失 | 新增 → 复用 `expo-sqlite/kv-store`（见 ADR-1） |
+| **分享长图**（新增 2026-07-21） | `expo-sharing` 已装未用于图片 | 新增 `react-native-view-shot`（视图→长图）+ `expo-media-library`（保存相册）；NFR4 零新增依赖的显式例外，经 Sprint Change Proposal 2026-07-21 批准 |
 | **状态管理** | 无全局库，`useFocusEffect` 重拉 | 保持，不引入 Redux/Zustand |
 | **字体** | PlayfairDisplay / LXGWWenKaiLite / SmileySans | 沿用 theme token |
 
@@ -296,9 +298,9 @@ Vivido 全部 7 个功能可在**现有技术栈上零新增依赖完成**——
 
 ```
 Vivido/
-├── app.json                          🟡 补 ios.infoPlist.NSMicrophoneUsageDescription
-├── App.tsx                           🟡 审查 init 链路（3秒进入写作）
-├── package.json                      ⚪ 零新增依赖
+├── app.json                          🟡 补 ios.infoPlist.NSMicrophoneUsageDescription；补 NSPhotoLibraryAddUsageDescription + 注册 expo-media-library 插件（2026-07-21）
+├── App.tsx                           🟡 审查 init 链路（3秒进入写作）；注册 SharePreview 路由（2026-07-21）
+├── package.json                      🟡 新增 react-native-view-shot + expo-media-library（2026-07-21，NFR4 例外）
 ├── src/
 │   ├── types/index.ts                🟡 MediaItem.type 加 'audio'；偏好键类型
 │   ├── theme/index.ts                ⚪
@@ -307,15 +309,17 @@ Vivido/
 │   │   ├── database.ts               🟡 SCHEMA_VERSION 2→3；MIGRATIONS[3]={}；getWordFrequency 优化
 │   │   ├── storage.ts                🟡 加录音落盘（复用 saveMedia 管道）
 │   │   ├── backup.ts                 🟡 BACKUP_VERSION 2→3；版本白名单[1,2,3]；audio mime 映射
-│   │   └── preferences.ts            🟢 kv-store 薄封装（Storage getItemSync/setItemAsync）
+│   │   ├── preferences.ts            🟢 kv-store 薄封装（Storage getItemSync/setItemAsync）
+│   │   └── share.ts                  🟢 长图生成/保存/分享（captureRef + media-library + sharing）（2026-07-21）
 │   ├── hooks/
 │   │   ├── useDiscovery.ts           🟡 移除 heatmap 数据流
 │   │   └── usePreference.ts          🟢 泛型偏好 hook（同步首帧读 + 写）
 │   ├── screens/
 │   │   ├── HomeScreen.tsx            🟡 时间分隔线 + 双布局切换
-│   │   ├── DetailScreen.tsx          🟡 双模式渲染（refined/quick）
+│   │   ├── DetailScreen.tsx          🟡 双模式渲染（refined/quick）；加分享入口（2026-07-21）
 │   │   ├── EditorScreen.tsx          🟡 集成录音入口；进入路径去 loading
 │   │   ├── DiscoveryScreen.tsx       🟡 删热力图 UI；词云 onPress 接 setSearchQuery
+│   │   ├── SharePreviewScreen.tsx    🟢 长图预览 + 保存/分享操作（2026-07-21）
 │   │   └── SettingsScreen.tsx        ⚪
 │   ├── components/
 │   │   ├── ActivityHeatmap.tsx       🔴 删除
@@ -354,6 +358,7 @@ Vivido/
 | 首页双布局 | `HomeScreen.tsx` + `usePreference.ts` + `preferences.ts` + `CarouselCard.tsx`（新建） |
 | 双模式详情 | `DetailScreen.tsx` + `usePreference.ts` |
 | 语音附件 | types+database+storage+backup+app.json+AudioRecorder/Player+MediaPicker |
+| 日记分享长图（2026-07-21） | `SharePreviewScreen.tsx` + `services/share.ts` + `DetailScreen.tsx`（入口）+ `RootStackParamList`/`App.tsx`（路由）+ `app.json`/`package.json`（权限与依赖） |
 
 ### 变更规模小结
 

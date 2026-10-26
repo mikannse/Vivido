@@ -3,3 +3,4 @@ export { EditorScreen } from './EditorScreen';
 export { DetailScreen } from './DetailScreen';
 export { SettingsScreen } from './SettingsScreen';
 export { DiscoveryScreen } from './DiscoveryScreen';
+export { SharePreviewScreen } from './SharePreviewScreen';

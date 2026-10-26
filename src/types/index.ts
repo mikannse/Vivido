@@ -51,4 +51,5 @@ export type RootStackParamList = {
   Detail: { diaryId: string };
   Settings: undefined;
   Discovery: undefined;
+  SharePreview: { diaryId: string };
 };

@@ -15,7 +15,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.vivido.diary",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Vivido 需要访问麦克风，以便你录制语音日记附件。"
+        "NSMicrophoneUsageDescription": "Vivido 需要访问麦克风，以便你录制语音日记附件。",
+        "NSPhotoLibraryAddUsageDescription": "Vivido 需要访问相册，以便保存你生成的日记分享长图。"
       }
     },
     "android": {
@@ -52,6 +53,7 @@
       ],
       "expo-audio",
       "expo-video",
+      "expo-media-library",
       "expo-dev-client"
     ]
   }

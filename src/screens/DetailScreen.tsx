@@ -252,6 +252,13 @@ export const DetailScreen: React.FC = () => {
           </TouchableOpacity>
           <View style={styles.headerActions}>
             <TouchableOpacity
+              onPress={() => navigation.navigate('SharePreview', { diaryId })}
+              style={styles.actionButton}
+              accessibilityLabel="分享长图"
+            >
+              <Text style={styles.editText}>分享</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               onPress={() => setMode(mode === 'refined' ? 'quick' : 'refined')}
               style={styles.actionButton}
               accessibilityLabel="切换呈现模式"

@@ -28,6 +28,7 @@ FR6: 首页支持两种浏览布局（时间线瀑布流 / 卡片轮播），用
 FR7: 日记详情页支持两种呈现模式（精致阅读模式 / 随手记模式），用户可切换，且模式偏好被持久化记忆。
 FR8: 媒体附件新增"语音（原声录音）"类型，与图片/视频平级，支持录音、播放、删除；不做语音转文字。
 FR9: 语音附件纳入备份导入导出，且旧版本备份（不含语音）仍可正常导入。
+FR10: 将单篇日记生成一张可分享的长图（标题、日期、正文、图片、标签、品牌水印），可保存到系统相册或经系统分享面板分享，用于朋友圈等社交场景。（新增，Sprint Change Proposal 2026-07-21）
 
 ### NonFunctional Requirements
 
@@ -38,6 +39,7 @@ NFR4（克制极简）：零新增第三方依赖；倾向删代码优于加代�
 NFR5（不惩罚简短）：数据模型容忍空标题、空媒体、极短正文；一句话/一张图/一段语音都是合法日记。
 NFR6（尊重自主权）：提供选择（布局切换、详情模式），不替用户决定；不制造 streak 压力。
 NFR7（备份向后兼容）：SCHEMA_VERSION 2→3 与 BACKUP_VERSION 2→3 演进后，旧备份必须仍可导入。
+NFR8（克制例外备案）：分享长图（FR10）引入 `react-native-view-shot` 与 `expo-media-library` 两个新依赖，系 NFR4「零新增依赖」的显式例外——该能力无法以现有技术栈实现，已在 Sprint Change Proposal 2026-07-21 中评审批准。
 
 ### Additional Requirements
 
@@ -69,8 +71,9 @@ NFR7（备份向后兼容）：SCHEMA_VERSION 2→3 与 BACKUP_VERSION 2→3 演
 | FR7 | Epic 3 | 双模式详情 |
 | FR8 | Epic 4 | 语音附件 |
 | FR9 | Epic 4 | 语音备份兼容 |
+| FR10 | Epic 5 | 日记分享长图（新增，2026-07-21） |
 
-全部 9 个 FR 已覆盖，无遗漏。NFR/AR 作为横切约束贯穿各 epic 的验收标准。
+全部 10 个 FR 已覆盖，无遗漏。NFR/AR 作为横切约束贯穿各 epic 的验收标准。
 
 ## Epic List
 
@@ -98,7 +101,15 @@ NFR7（备份向后兼容）：SCHEMA_VERSION 2→3 与 BACKUP_VERSION 2→3 演
 **内聚理由:** 全栈纵切（types→db→storage→backup→组件+app.json），独立里程碑。
 **批次:** 第三批 | **风险:** 高
 
-**依赖与推荐顺序:** Epic 1、2 完全独立可先做；Epic 3 须先建 ADR-1 基元（epic 内首个 story）；Epic 4 独立但最重，须先补 iOS 麦克风权限(AR5)。推荐顺序 1 → 2 → 3 → 4。
+### Epic 5: 日记分享长图（新增，Sprint Change Proposal 2026-07-21）
+
+把单篇日记生成一张可分享的长图，用于朋友圈等社交场景，让记忆以视觉方式被带走。
+
+**FRs covered:** FR10
+**内聚理由:** 独立功能：分享入口 → 预览页 → 长图渲染 → 保存/分享。与既有记录/浏览/媒体管道低耦合，只读现有 `DiaryEntry`。
+**批次:** 第三批并行的独立里程碑，或在 Epic 3 完成后接入 | **风险:** 中（长图截图性能、多图内存、权限配置）
+
+**依赖与推荐顺序:** Epic 1、2 完全独立可先做；Epic 3 须先建 ADR-1 基元（epic 内首个 story）；Epic 4 独立但最重，须先补 iOS 麦克风权限(AR5)；Epic 5 独立，依赖 `react-native-view-shot` + `expo-media-library` 两个新依赖（NFR8 例外）。推荐顺序 1 → 2 → 3 → 4 → 5。
 
 ## Epic 1: 精简回顾岛（Discovery 重构）
 
@@ -352,3 +363,89 @@ So that 换机迁移时语音不丢，且不废掉我已有的备份。
 **When** 导入
 **Then** audio 文件正确落盘、media 行正确重建
 **And** 缺失音频文件时复用现有 `Missing media file` 报错逻辑（E6）
+
+## Epic 5: 日记分享长图（新增，Sprint Change Proposal 2026-07-21）
+
+把单篇日记生成一张可分享的长图，用于朋友圈等社交场景，让记忆以视觉方式被带走。
+
+### Story 5.1: 分享入口与导航
+
+As a 想分享日记的用户,
+I want 在详情页看到一个分享入口并进入分享预览页,
+So that 我可以开始生成这篇日记的分享长图。
+
+**Acceptance Criteria:**
+
+**Given** 用户打开某篇日记的 DetailScreen
+**When** 页面渲染
+**Then** 顶部操作区出现「分享」入口（与编辑/删除并列）
+**And** 点击后导航到 `SharePreview` 路由（`RootStackParamList` 新增 `SharePreview: { diaryId: string }`）
+
+**Given** 分享预览页作为新的 Stack.Screen
+**When** 注册路由
+**Then** 在 `App.tsx` 的 Navigator 中注册 `SharePreviewScreen`，沿用既有 `headerShown: false` 约定
+**And** 只传 `diaryId`，页面内自行经 `getDiaryById` 取数（架构边界：UI 不直接开 SQLite）
+
+### Story 5.2: 长图预览页 UI
+
+As a 想分享日记的用户,
+I want 在预览页滚动查看完整长图效果,
+So that 我能在生成前确认长图的内容与样式。
+
+**Acceptance Criteria:**
+
+**Given** 用户进入 SharePreviewScreen
+**When** 页面加载对应日记
+**Then** 屏幕内以接近成图的样式滚动预览长图卡片：标题、日期、正文、图片、标签、品牌水印（Vivido）
+**And** 视觉风格沿用 theme token（奶油底色/棕色文字/橙色主色）与三款已授权字体，与精致阅读模式一脉相承
+
+**Given** 长图内容结构的边界场景
+**When** 日记缺某些元素
+**Then** 空标题显示「无标题」、无正文/无图片/无标签时对应区块省略，卡片仍然成立（NFR5）
+**And** 长图只使用图片媒体（视频/语音不进入卡片，本期范围决策）
+
+**Given** 长图可能有超长正文与大量图片
+**When** 渲染预览与成图
+**Then** 正文限制最大行数（超出以省略号截断）、图片限制最多 6 张且单张限高（缓解长图截图内存风险）
+**And** 卡片底部始终包含日期与 Vivido 品牌水印
+
+### Story 5.3: 生成静态长图（react-native-view-shot）
+
+As a 想分享日记的用户,
+I want 把预览的长图生成为一张静态图片文件,
+So that 它可以被保存或分享。
+
+**Acceptance Criteria:**
+
+**Given** SharePreviewScreen 已渲染长图卡片
+**When** 用户触发保存或分享
+**Then** 通过 `react-native-view-shot` 的 `captureRef` 将卡片视图截取为 PNG/JPEG 文件（临时目录）
+**And** 截取逻辑收敛在 `src/services/share.ts`，屏幕组件只持有 ref 与调用
+
+**Given** 长图高度可能很大
+**When** 截图
+**Then** 使用 JPEG 格式 + 合理质量/尺寸参数控制内存（缓解措施见变更提案风险表）
+**And** 截图失败时不崩溃，向用户提示失败原因
+
+### Story 5.4: 保存相册与系统分享
+
+As a 想分享日记的用户,
+I want 把长图保存到相册或打开系统分享面板,
+So that 我可以发到朋友圈等社交场景。
+
+**Acceptance Criteria:**
+
+**Given** 长图文件已生成
+**When** 用户点击「保存到相册」
+**Then** 经 `expo-media-library` 写入系统相册，成功后给出确认反馈
+**And** iOS `NSPhotoLibraryAddUsageDescription` 已在 `app.json` 配置，`expo-media-library` 插件已注册
+
+**Given** 长图文件已生成
+**When** 用户点击「分享」
+**Then** 经 `expo-sharing` 打开系统分享面板
+
+**Given** 权限与临时文件的生命周期
+**When** 相册权限被拒绝
+**Then** 应用不崩溃，提示用户前往系统设置开启（E4 同款引导）
+**And** 保存/分享完成后（或页面卸载时）删除临时长图文件，避免存储堆积
+**And** `npx tsc --noEmit` 无类型错误

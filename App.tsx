@@ -11,6 +11,7 @@ import { EditorScreen } from './src/screens/EditorScreen';
 import { DetailScreen } from './src/screens/DetailScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { DiscoveryScreen } from './src/screens/DiscoveryScreen';
+import { SharePreviewScreen } from './src/screens/SharePreviewScreen';
 import { initDatabase } from './src/services/database';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -150,6 +151,7 @@ export default function App() {
               options={{ presentation: 'modal' }}
             />
             <Stack.Screen name="Detail" component={DetailScreen} />
+            <Stack.Screen name="SharePreview" component={SharePreviewScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
             <Stack.Screen name="Discovery" component={DiscoveryScreen} />
           </Stack.Navigator>
