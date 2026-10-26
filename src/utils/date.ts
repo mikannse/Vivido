@@ -85,9 +85,22 @@ const startOfDay = (date: Date): number => {
   return d.getTime();
 };
 
+const DAY_MS = 86400000;
+
+// 周一为一周的起点（中文习惯）。返回本周一 00:00 的时间戳。
+const startOfWeekMonday = (date: Date): number => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  const offset = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - offset);
+  return d.getTime();
+};
+
 /**
- * 将时间戳归入一个轻量的自然时间分组标签（今天/昨天/本周/上个月……），
+ * 将时间戳归入一个轻量的自然时间分组标签（今天/昨天/本周/上周/上个月……），
  * 用于首页时间线的分隔线。纯本地日历计算，无第三方依赖。
+ * “本周/上周”按自然周划分（周一为起点），而非“最近 7 天”。
  */
 export const getRelativeTimeGroup = (
   timestamp: number,
@@ -96,12 +109,16 @@ export const getRelativeTimeGroup = (
   const today = new Date(now);
   const target = new Date(timestamp);
 
-  const dayDiff = Math.round((startOfDay(today) - startOfDay(target)) / 86400000);
+  const dayDiff = Math.round((startOfDay(today) - startOfDay(target)) / DAY_MS);
 
   if (dayDiff <= 0) return '今天';
   if (dayDiff === 1) return '昨天';
   if (dayDiff === 2) return '前天';
-  if (dayDiff < 7) return '本周';
+
+  const weekStart = startOfWeekMonday(today);
+  const targetMs = startOfDay(target);
+  if (targetMs >= weekStart) return '本周';
+  if (targetMs >= weekStart - 7 * DAY_MS) return '上周';
 
   const sameYear = target.getFullYear() === today.getFullYear();
   const monthDiff =
