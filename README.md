@@ -23,6 +23,7 @@
 - **🎨 Warm vintage theme** — Cream backgrounds, brown text, orange accents across 3 custom fonts
 - **📱 Multiple layouts** — Timeline or carousel home view, customizable per preference
 - **✏️ Auto-save drafts** — In-progress entries are saved automatically
+- **🖼️ Share long image** — Render a diary as a shareable image (title, date, body, photos, tags, watermark) to save or share
 
 ## Tech Stack
 
@@ -60,7 +61,7 @@ npm install
 npm start
 ```
 
-Scan the QR code with Expo Go, or connect via [LAN mode](https://docs.expo.dev/guides/lan/):
+> **Note:** Vivido uses native modules that Expo Go does not ship. Build and install a development client first (see [Local Debugging](#local-debugging)), then scan the QR code with that client, or connect via [LAN mode](https://docs.expo.dev/guides/lan/):
 
 ```bash
 npm run start:lan
@@ -70,6 +71,66 @@ If you're on a different network, use tunnel mode:
 
 ```bash
 npm run start:tunnel
+```
+
+## Local Debugging
+
+Vivido ships native modules (`react-native-view-shot`, `expo-media-library`) that **do not run in Expo Go**. To debug on a device or emulator, build a development client first, then start Metro.
+
+### Prerequisites
+
+- [Android Studio](https://developer.android.com/studio) with an Android SDK (or an Android device with a development build installed)
+- An emulator running (`emulator -list-avds` / Android Studio's Device Manager), or a USB-connected device visible to `adb devices`
+
+### Option A — Command line (fastest)
+
+```bash
+# (First time / after adding native modules) regenerate the native project
+npx expo prebuild --platform android --clean
+
+# Build the dev client, install it on the running emulator, and start Metro
+npx expo run:android
+```
+
+> `npx expo run:android` targets the running emulator (`emulator-5554`) or connected device automatically. The first native build downloads Gradle dependencies and can take several minutes.
+
+### Option B — Android Studio
+
+1. Generate the native project once:
+   ```bash
+   npx expo prebuild --platform android --clean
+   ```
+2. Open **Android Studio** → **Open** → select the `android/` folder (not the repo root).
+3. Wait for the Gradle sync to finish (progress bar in the bottom-right).
+4. Pick your device in the toolbar's device selector (the running emulator appears there).
+5. In a separate terminal, start Metro:
+   ```bash
+   npx expo start -c
+   ```
+6. Back in Android Studio, press **Run ▶** (or press `a` in the Metro terminal to open on Android).
+
+> Use `-c` to clear the Metro cache — especially after touching native dependencies or SQL, to avoid serving a stale bundle.
+
+### Troubleshooting
+
+**`SDK location not found` / `ANDROID_HOME` is empty**
+
+Gradle resolves the SDK from `android/local.properties` (`sdk.dir=...`) or the `ANDROID_HOME` env var. `prebuild --clean` regenerates `android/` and drops this git-ignored file. Recreate it:
+
+```bash
+echo "sdk.dir=$HOME/Library/Android/sdk" > android/local.properties
+```
+
+Adjust the path to your SDK (common locations: `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux, `%LOCALAPPDATA%\Android\Sdk` on Windows).
+
+**Stale bundle after changing native code / SQL**
+
+Clear Metro's cache and rebuild the dev client:
+
+```bash
+npx expo start -c
+npx expo prebuild --platform android --clean
+npx expo run:android
 ```
 
 ## Building
@@ -122,17 +183,19 @@ src/
 ├── hooks/          # Custom React hooks
 │   ├── useDiscovery.ts      # Search/filter/wordcloud orchestration
 │   └── usePreference.ts     # Typed preference hook with sync init
-├── screens/        # 5 main screens
+├── screens/        # Main screens
 │   ├── HomeScreen.tsx       # Diary feed with multiple layouts
 │   ├── EditorScreen.tsx     # Create/edit diary with auto-save drafts
 │   ├── DetailScreen.tsx     # Diary detail view
 │   ├── DiscoveryScreen.tsx  # Search, filters, word cloud
-│   └── SettingsScreen.tsx   # Backup export/import
+│   ├── SettingsScreen.tsx   # Backup export/import
+│   └── SharePreviewScreen.tsx  # Shareable long-image preview
 ├── services/       # Business logic layer
 │   ├── database.ts         # SQLite CRUD and schema migrations
 │   ├── storage.ts          # Media file management
 │   ├── backup.ts           # ZIP backup/restore
-│   └── preferences.ts      # kv-store UI preferences
+│   ├── preferences.ts      # kv-store UI preferences
+│   └── share.ts            # Long-image capture, save, and system share
 ├── theme/          # Design tokens
 │   └── index.ts            # Typography and color palette
 ├── types/          # TypeScript interfaces
