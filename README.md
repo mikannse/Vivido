@@ -111,6 +111,30 @@ npx expo run:android
 
 > Use `-c` to clear the Metro cache — especially after touching native dependencies or SQL, to avoid serving a stale bundle.
 
+### Daily workflow (after the dev client is built)
+
+Once the development client is built and installed, you rarely need to rebuild it. Most changes live in JS/TS and pick up via Metro's Fast Refresh:
+
+```bash
+# 1. Start Metro (dev client on the emulator/device connects to it)
+npx expo start          # or: npm run start:lan  if the QR/URL picks the wrong IP
+
+# 2. Open the installed dev client, then edit code and save —
+#    the app hot-reloads in 1–2 s. Press `r` in the Metro terminal to force a full reload.
+```
+
+**Only rebuild the native client** (`npx expo run:android`) when you changed:
+
+- `app.json` (new plugin, permission, icon, etc.)
+- a native dependency (any `expo-*` module with native code)
+- files under `android/`
+
+If a change isn't reflecting, clear Metro's cache:
+
+```bash
+npx expo start -c
+```
+
 ### Troubleshooting
 
 **`SDK location not found` / `ANDROID_HOME` is empty**
@@ -153,6 +177,43 @@ Cloud build is recommended (requires an Apple Developer account):
 ```bash
 eas build --platform ios --profile production
 ```
+
+### Automatic Android APK via GitHub Actions
+
+Pushing to `main` builds a signed release APK and attaches it to a GitHub Release
+(no EAS account required). The workflow lives in `.github/workflows/build-apk.yml`.
+
+One-time setup:
+
+1. **Generate a release keystore** (keep the passwords and alias safe — they can't be recovered):
+
+   ```bash
+   keytool -genkeypair -v \
+     -keystore release.keystore \
+     -alias mydiary \
+     -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+   > Never commit `release.keystore` (it's already git-ignored via `*.keystore`).
+
+2. **Add four repository secrets** (GitHub → Settings → Secrets and variables → Actions → New repository secret):
+
+   | Secret | Value |
+   |---|---|
+   | `KEYSTORE_BASE64` | `base64 -i release.keystore \| tr -d '\n'` |
+   | `KEYSTORE_PASSWORD` | keystore password |
+   | `KEY_ALIAS` | key alias (e.g. `mydiary`) |
+   | `KEY_PASSWORD` | key password |
+
+3. **Push to `main`** (or run the workflow manually from the Actions tab). The APK
+   appears under GitHub **Releases**, tagged `v<version>` from `package.json`.
+
+Notes:
+
+- `versionCode` is injected from the GitHub Actions run number, so every build can
+  overwrite-install over the previous one.
+- A release APK and a local debug build use different signatures and won't
+  overwrite each other — uninstall one before installing the other.
 
 ### Build Cache
 

@@ -18,6 +18,9 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Android release signing keystore (never commit; stored in GitHub Secrets)
+*.keystore
+
 # Metro
 .metro-health-check*
 
@@ -40,7 +43,9 @@ yarn-error.*
 /ios
 /android
 
-scripts/
+# local dev scripts (kept out of the repo)
+scripts/*
+!scripts/android-signing.sh
 TODO.md
 
 # decompiled

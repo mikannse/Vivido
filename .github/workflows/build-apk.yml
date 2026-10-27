@@ -1,0 +1,75 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Android SDK components must match what the Expo plugin pins (see the
+      # "> Configure project :app" output of a local `expo run:android`):
+      # NDK 27.1.12297006, buildTools 36.0.0, compileSdk 36.
+      NDK_VERSION: 27.1.12297006
+      CMAKE_VERSION: 3.22.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The ubuntu-latest runner image ships a preinstalled Android SDK
+      # (ANDROID_HOME is already set), so we only install the components this
+      # project needs.
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "build-tools;36.0.0" "platforms;android-36"
+          sdkmanager "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}"
+
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Inject release signing config
+        run: bash scripts/android-signing.sh
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+
+      - name: Build release APK
+        run: cd android && ./gradlew assembleRelease --no-daemon
+
+      - name: Read app version
+        id: version
+        run: echo "value=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish APK to GitHub Release
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          APK: android/app/build/outputs/apk/release/*.apk
+        run: |
+          set -euo pipefail
+          # Create the release (or upload to it if the tag already exists).
+          gh release create "v${VERSION}" $APK --generate-notes \
+            || gh release upload "v${VERSION}" $APK --clobber
