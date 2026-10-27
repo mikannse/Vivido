@@ -21,8 +21,11 @@ cd "$(dirname "$0")/.."
 : "${KEY_PASSWORD:?KEY_PASSWORD is required}"
 
 # 1) Restore the release keystore next to the app module (where build.gradle
-#    resolves `file('release.keystore')`).
-echo "$KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
+#    resolves `file('release.keystore')`). Restrict permissions: the keystore
+#    holds the signing key, so keep it owner-readable only.
+umask 077
+printf '%s' "$KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
+chmod 600 android/app/release.keystore
 
 # 2) Patch android/app/build.gradle.
 node <<'NODE'

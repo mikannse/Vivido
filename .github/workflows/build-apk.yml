@@ -70,10 +70,13 @@ jobs:
 
       - name: Publish APK to GitHub Release
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.value }}
-          APK: android/app/build/outputs/apk/release/*.apk
         run: |
           set -euo pipefail
+          # Expand the APK glob explicitly (avoids gh's inconsistent glob handling).
+          mapfile -t APKS < <(find android/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print)
+          [ "${#APKS[@]}" -gt 0 ] || { echo "No APK found"; exit 1; }
           # Create the release (or upload to it if the tag already exists).
-          gh release create "v${VERSION}" $APK --generate-notes \
-            || gh release upload "v${VERSION}" $APK --clobber
+          gh release create "v${VERSION}" "${APKS[@]}" --generate-notes \
+            || gh release upload "v${VERSION}" "${APKS[@]}" --clobber
