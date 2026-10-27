@@ -8,6 +8,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Keyboard,
+  useWindowDimensions,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -85,6 +87,9 @@ export const EditorScreen: React.FC = () => {
   // Keyboard avoidance: scroll the focused content input above the keyboard.
   const scrollRef = useRef<ScrollView>(null);
   const contentInputRef = useRef<TextInput>(null);
+  const scrollYRef = useRef(0);
+  const keyboardHeightRef = useRef(0);
+  const { height: windowHeight } = useWindowDimensions();
 
   useEffect(() => {
     if (isEditing && diaryId) {
@@ -93,6 +98,20 @@ export const EditorScreen: React.FC = () => {
       checkDraft();
     }
   }, [diaryId]);
+
+  // Track keyboard height so content growth can scroll the caret above it.
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      keyboardHeightRef.current = e.endCoordinates.height;
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardHeightRef.current = 0;
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   // Auto-save draft with debounce
   useEffect(() => {
@@ -297,6 +316,31 @@ export const EditorScreen: React.FC = () => {
     scroll.scrollResponderScrollNativeHandleToKeyboard(input as any, 24);
   };
 
+  const handleScroll = (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+    scrollYRef.current = e.nativeEvent.contentOffset.y;
+  };
+
+  const handleContentSizeChange = (e: {
+    nativeEvent: { contentSize: { width: number; height: number } };
+  }) => {
+    const input = contentInputRef.current;
+    const scroll = scrollRef.current;
+    if (!input || !scroll || keyboardHeightRef.current === 0) return;
+    const h = e.nativeEvent.contentSize.height;
+    input.measureInWindow((_x, y) => {
+      // 8 = contentInput paddingVertical
+      const caretBottom = y + h + 8;
+      const keyboardTop = windowHeight - keyboardHeightRef.current;
+      const margin = 32;
+      if (caretBottom > keyboardTop - margin) {
+        scroll.scrollTo({
+          y: scrollYRef.current + (caretBottom - keyboardTop + margin),
+          animated: true,
+        });
+      }
+    });
+  };
+
   const handleAudioRecorded = (uri: string) => {
     const newAudio: MediaItem = {
       id: generateId(),
@@ -455,6 +499,8 @@ export const EditorScreen: React.FC = () => {
             contentContainerStyle={styles.scrollContentContainer}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
           >
             {/* Date selector */}
             <View style={styles.dateRow}>
@@ -500,6 +546,7 @@ export const EditorScreen: React.FC = () => {
                 autoCapitalize="none"
                 autoFocus={!isEditing}
                 onFocus={handleContentFocus}
+                onContentSizeChange={handleContentSizeChange}
               />
             </View>
 
