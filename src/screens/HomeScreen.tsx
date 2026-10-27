@@ -7,7 +7,7 @@ import { RootStackParamList, DiaryEntry } from '../types';
 import { getDiariesPaginated } from '../services/database';
 import { getRelativeTimeGroup } from '../utils/date';
 import { usePreference } from '../hooks/usePreference';
-import { PREF_KEYS } from '../services/preferences';
+import { PREF_KEYS, setPreference } from '../services/preferences';
 import { colors, typography } from '../theme';
 import { TimelineCard } from '../components/TimelineCard';
 import { CarouselCard } from '../components/CarouselCard';
@@ -28,6 +28,7 @@ export const HomeScreen: React.FC = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [layout, setLayout] = usePreference<HomeLayout>(PREF_KEYS.homeLayout, 'timeline');
+  const [savedScrollY] = usePreference<string>(PREF_KEYS.homeScrollY, '0');
 
   // Cache refs to avoid redundant loads and stale closures
   const lastLoadTimeRef = useRef<number>(0);
@@ -35,6 +36,10 @@ export const HomeScreen: React.FC = () => {
   const currentPageRef = useRef(0);
   const diariesRef = useRef(diaries);
   diariesRef.current = diaries;
+
+  // Timeline scroll position (saved on blur, restored on focus)
+  const listRef = useRef<FlatList<DiaryEntry>>(null);
+  const scrollYRef = useRef(Number(savedScrollY) || 0);
 
   // 为每个条目计算是否需要在其上方显示时间分隔线：与上一条不同分组时显示。
   // 数据按 createdAt DESC 拼接，分页追加后此比较天然延续、不重复不错位。
@@ -79,12 +84,26 @@ export const HomeScreen: React.FC = () => {
     }
   }, []);
 
-  // Initial load on focus
+  // Initial load on focus; restore saved scroll position once items are rendered.
   useFocusEffect(
     useCallback(() => {
       currentPageRef.current = 0;
-      loadDiariesPage(0, true);
-    }, [loadDiariesPage])
+      loadDiariesPage(0, true).then(() => {
+        if (layout !== 'timeline') return;
+        const offset = scrollYRef.current;
+        if (offset <= 0) return;
+        // Wait a frame so the list has rendered its items before scrolling.
+        requestAnimationFrame(() => {
+          listRef.current?.scrollToOffset({ offset, animated: false });
+        });
+      });
+
+      return () => {
+        if (layout === 'timeline') {
+          void setPreference(PREF_KEYS.homeScrollY, String(scrollYRef.current));
+        }
+      };
+    }, [loadDiariesPage, layout])
   );
 
   // Load more when scrolling to bottom
@@ -198,6 +217,7 @@ export const HomeScreen: React.FC = () => {
         />
       ) : (
         <FlatList
+          ref={listRef}
           data={diaries}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
@@ -214,6 +234,10 @@ export const HomeScreen: React.FC = () => {
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
           showsVerticalScrollIndicator={false}
+          onScroll={(e) => {
+            scrollYRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
         />
       )}
 

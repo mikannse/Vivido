@@ -8,6 +8,7 @@ import { Storage } from 'expo-sqlite/kv-store';
 
 export const PREF_KEYS = {
   homeLayout: 'pref.home.layout',
+  homeScrollY: 'pref.home.scrollY',
   detailMode: 'pref.detail.mode',
 } as const;
 

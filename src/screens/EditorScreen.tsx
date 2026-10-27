@@ -82,6 +82,10 @@ export const EditorScreen: React.FC = () => {
   // Draft data for restore dialog
   const [draftData, setDraftData] = useState<Draft | null>(null);
 
+  // Keyboard avoidance: scroll the focused content input above the keyboard.
+  const scrollRef = useRef<ScrollView>(null);
+  const contentInputRef = useRef<TextInput>(null);
+
   useEffect(() => {
     if (isEditing && diaryId) {
       loadDiary(diaryId);
@@ -286,6 +290,13 @@ export const EditorScreen: React.FC = () => {
     }
   };
 
+  const handleContentFocus = () => {
+    const scroll = scrollRef.current;
+    const input = contentInputRef.current;
+    if (!scroll || !input) return;
+    scroll.scrollResponderScrollNativeHandleToKeyboard(input as any, 24);
+  };
+
   const handleAudioRecorded = (uri: string) => {
     const newAudio: MediaItem = {
       id: generateId(),
@@ -439,6 +450,7 @@ export const EditorScreen: React.FC = () => {
           </View>
 
           <ScrollView
+            ref={scrollRef}
             style={styles.mediaScroll}
             contentContainerStyle={styles.scrollContentContainer}
             keyboardShouldPersistTaps="handled"
@@ -475,6 +487,7 @@ export const EditorScreen: React.FC = () => {
               />
               <View style={styles.divider} />
               <TextInput
+                ref={contentInputRef}
                 style={styles.contentInput}
                 placeholder="写下今天的故事..."
                 placeholderTextColor="#c4b8ae"
@@ -486,6 +499,7 @@ export const EditorScreen: React.FC = () => {
                 autoCorrect={false}
                 autoCapitalize="none"
                 autoFocus={!isEditing}
+                onFocus={handleContentFocus}
               />
             </View>
 
