@@ -74,9 +74,25 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
+          RELEASE_DIR="android/app/build/outputs/apk/release"
           # Expand the APK glob explicitly (avoids gh's inconsistent glob handling).
-          mapfile -t APKS < <(find android/app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print)
+          mapfile -t APKS < <(find "$RELEASE_DIR" -maxdepth 1 -name '*.apk' -print)
           [ "${#APKS[@]}" -gt 0 ] || { echo "No APK found"; exit 1; }
+          # Rename APKs to "<app>+<version>.apk" so release assets are human-readable.
+          STAGING="$(mktemp -d)"
+          ASSETS=()
+          if [ "${#APKS[@]}" -eq 1 ]; then
+            TARGET="$STAGING/vivido+${VERSION}.apk"
+            cp "${APKS[0]}" "$TARGET"
+            ASSETS+=("$TARGET")
+          else
+            for apk in "${APKS[@]}"; do
+              suffix="$(basename "$apk" .apk)"
+              TARGET="$STAGING/vivido+${VERSION}-${suffix}.apk"
+              cp "$apk" "$TARGET"
+              ASSETS+=("$TARGET")
+            done
+          fi
           # Create the release (or upload to it if the tag already exists).
-          gh release create "v${VERSION}" "${APKS[@]}" --generate-notes \
-            || gh release upload "v${VERSION}" "${APKS[@]}" --clobber
+          gh release create "v${VERSION}" "${ASSETS[@]}" --generate-notes \
+            || gh release upload "v${VERSION}" "${ASSETS[@]}" --clobber
