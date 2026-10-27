@@ -37,10 +37,14 @@ jobs:
         run: npm ci
 
       # The ubuntu-latest runner image ships a preinstalled Android SDK
-      # (ANDROID_HOME is already set), so we only install the components this
-      # project needs.
+      # (build-tools 36.0.0 and platform android-36 are already present), but
+      # sdkmanager is not on PATH and the NDK/CMake versions differ. Locate
+      # sdkmanager under ANDROID_HOME and install the exact NDK/CMake the Expo
+      # plugin pins.
       - name: Install Android SDK components
         run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "build-tools;36.0.0" "platforms;android-36"
           sdkmanager "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}"
